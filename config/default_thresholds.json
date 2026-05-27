@@ -1,0 +1,136 @@
+{
+  "_comment": "Default threshold configuration. All values are context-aware guidelines, not hard rules.",
+
+  "scale": {
+    "micro_cap_usd": 300000000,
+    "small_cap_usd": 2000000000,
+    "mid_cap_usd": 10000000000,
+    "large_cap_usd": 200000000000,
+    "mega_cap_usd": 200000000001,
+    "min_meaningful_revenue_usd": 50000000
+  },
+
+  "growth": {
+    "revenue_cagr_1yr_strong": 0.15,
+    "revenue_cagr_1yr_acceptable": 0.05,
+    "revenue_cagr_3yr_strong": 0.12,
+    "revenue_cagr_3yr_acceptable": 0.04,
+    "earnings_growth_strong": 0.15,
+    "earnings_growth_acceptable": 0.05
+  },
+
+  "profitability": {
+    "gross_margin_strong": 0.50,
+    "gross_margin_acceptable": 0.25,
+    "operating_margin_strong": 0.20,
+    "operating_margin_acceptable": 0.08,
+    "net_margin_strong": 0.15,
+    "net_margin_acceptable": 0.05,
+    "roe_strong": 0.20,
+    "roe_acceptable": 0.10,
+    "roic_strong": 0.15,
+    "roic_acceptable": 0.08,
+    "roa_strong": 0.10,
+    "roa_acceptable": 0.04
+  },
+
+  "cashflow": {
+    "fcf_yield_strong": 0.05,
+    "fcf_yield_acceptable": 0.02,
+    "fcf_margin_strong": 0.15,
+    "fcf_margin_acceptable": 0.05,
+    "capex_intensity_low": 0.05,
+    "capex_intensity_high": 0.20
+  },
+
+  "balance_sheet": {
+    "debt_to_ebitda_strong": 1.5,
+    "debt_to_ebitda_acceptable": 3.0,
+    "debt_to_ebitda_danger": 5.0,
+    "current_ratio_strong": 2.0,
+    "current_ratio_acceptable": 1.0,
+    "interest_coverage_strong": 10.0,
+    "interest_coverage_acceptable": 3.0,
+    "net_debt_to_equity_strong": 0.5,
+    "net_debt_to_equity_acceptable": 1.5
+  },
+
+  "valuation": {
+    "pe_cheap": 15,
+    "pe_fair": 25,
+    "pe_expensive": 35,
+    "ev_ebitda_cheap": 10,
+    "ev_ebitda_fair": 18,
+    "ev_ebitda_expensive": 25,
+    "ps_cheap": 2,
+    "ps_fair": 5,
+    "ps_expensive": 10,
+    "pb_cheap": 1.5,
+    "pb_fair": 3.0,
+    "pb_expensive": 5.0,
+    "peg_cheap": 1.0,
+    "peg_fair": 1.5,
+    "peg_expensive": 2.5,
+    "fcf_yield_cheap": 0.05,
+    "fcf_yield_fair": 0.03,
+    "fcf_yield_expensive": 0.015
+  },
+
+  "dividends": {
+    "yield_strong": 0.04,
+    "yield_acceptable": 0.01,
+    "payout_ratio_safe": 0.50,
+    "payout_ratio_warning": 0.75,
+    "payout_ratio_danger": 0.90,
+    "fcf_coverage_strong": 2.0,
+    "fcf_coverage_acceptable": 1.2,
+    "years_consecutive_strong": 10,
+    "years_consecutive_acceptable": 5
+  },
+
+  "sector_adjustments": {
+    "_comment": "Multipliers applied to base thresholds for each sector",
+    "Technology": {
+      "pe_multiplier": 1.6,
+      "ps_multiplier": 2.5,
+      "gross_margin_boost": 0.10
+    },
+    "Financial Services": {
+      "pe_multiplier": 0.7,
+      "debt_to_ebitda_multiplier": 2.5,
+      "roe_boost": 0.05
+    },
+    "Real Estate": {
+      "pe_multiplier": 1.4,
+      "debt_to_ebitda_multiplier": 2.0
+    },
+    "Utilities": {
+      "pe_multiplier": 1.1,
+      "debt_to_ebitda_multiplier": 2.0,
+      "dividend_yield_boost": 0.02
+    },
+    "Healthcare": {
+      "pe_multiplier": 1.4,
+      "ps_multiplier": 1.5
+    },
+    "Consumer Defensive": {
+      "pe_multiplier": 1.0,
+      "gross_margin_boost": -0.05
+    },
+    "Energy": {
+      "pe_multiplier": 0.8,
+      "capex_intensity_high": 0.35
+    },
+    "Industrials": {
+      "pe_multiplier": 0.9,
+      "capex_intensity_high": 0.15
+    }
+  },
+
+  "ml": {
+    "outperformance_threshold": 0.20,
+    "prediction_horizon_days": 252,
+    "min_history_years": 3,
+    "feature_lookback_quarters": 8
+  }
+}

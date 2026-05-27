@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# Data cache (generated files — do not track)
+data/cache/*.json
+data/cache/*.csv
+data/first_principles/cache/
+
+# Outputs (remove if you want to track reports)
+# outputs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets
+.env
+secrets.json
+api_keys.json
+
+# Session logs (optional)
+data/session_log.csv
