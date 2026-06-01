@@ -161,6 +161,10 @@ class StockData:
     def recommendations(self) -> pd.DataFrame:
         return self._raw.get("recommendations", pd.DataFrame())
 
+    @property
+    def quarterly_income_stmt(self) -> pd.DataFrame:
+        return self._raw.get("quarterly_income_stmt", pd.DataFrame())
+
     def get_price_on_date(self, target_date) -> Optional[float]:
         """Return the closing price nearest to target_date."""
         hist = self.history
@@ -174,18 +178,19 @@ class StockData:
         return safe_float(hist["Close"].iloc[idx])
 
     def days_since_last_filing(self) -> Optional[int]:
-        """Return days elapsed since the most recent quarterly filing."""
-        income = self.income_stmt
-        if income.empty:
-            return None
-        latest_col = income.columns[0] if not income.empty else None
-        if latest_col is None:
-            return None
-        try:
-            filing_date = pd.Timestamp(latest_col).date()
-            return (datetime.today().date() - filing_date).days
-        except Exception:
-            return None
+        """
+        Return days elapsed since the most recent quarterly SEC filing.
+        Prefers quarterly_income_stmt (most recent quarter) over annual.
+        """
+        # Try quarterly first — gives the actual most recent 10-Q/10-K date
+        for df in (self.quarterly_income_stmt, self.income_stmt):
+            if df is not None and not df.empty:
+                try:
+                    filing_date = pd.Timestamp(df.columns[0]).date()
+                    return (datetime.today().date() - filing_date).days
+                except Exception:
+                    continue
+        return None
 
     def staleness_label(self) -> str:
         """Human-readable freshness label for display in visuals."""
@@ -203,6 +208,7 @@ class StockData:
         datasets = {
             "info": self._fetch_info,
             "income_stmt": self._fetch_income,
+            "quarterly_income_stmt": self._fetch_quarterly_income,
             "balance_sheet": self._fetch_balance,
             "cash_flow": self._fetch_cashflow,
             "history": self._fetch_history,
@@ -249,6 +255,12 @@ class StockData:
             stmt = self._yf.income_stmt
         return stmt if stmt is not None else pd.DataFrame()
 
+    def _fetch_quarterly_income(self) -> pd.DataFrame:
+        stmt = self._yf.quarterly_income_stmt
+        if stmt is None or stmt.empty:
+            stmt = self._yf.quarterly_financials
+        return stmt if stmt is not None else pd.DataFrame()
+
     def _fetch_balance(self) -> pd.DataFrame:
         bs = self._yf.balance_sheet
         return bs if bs is not None else pd.DataFrame()
@@ -288,7 +300,7 @@ class StockData:
           - History:         outer keys = date strings  (rows), inner keys = OHLCV col names
             → reconstruct as DF, then convert index to DatetimeIndex
         """
-        if name in ("income_stmt", "balance_sheet", "cash_flow", "earnings_history", "recommendations"):
+        if name in ("income_stmt", "quarterly_income_stmt", "balance_sheet", "cash_flow", "earnings_history", "recommendations"):
             if isinstance(data, dict):
                 try:
                     # outer keys = metric names → rows; inner keys = date strings → columns
@@ -307,7 +319,8 @@ class StockData:
                 try:
                     # outer keys = date strings → index; inner keys = OHLCV → columns
                     df = pd.DataFrame.from_dict(data, orient="index")
-                    df.index = pd.to_datetime(df.index, errors="coerce")
+                    # utc=True normalises mixed timezone offsets (EDT/EST) to a single tz
+                    df.index = pd.to_datetime(df.index, errors="coerce", utc=True)
                     for col in df.columns:
                         df[col] = pd.to_numeric(df[col], errors="coerce")
                     return df
@@ -331,7 +344,7 @@ class StockData:
         return data
 
     def _empty_fallback(self, name: str) -> Any:
-        if name in ("income_stmt", "balance_sheet", "cash_flow", "earnings_history", "recommendations"):
+        if name in ("income_stmt", "quarterly_income_stmt", "balance_sheet", "cash_flow", "earnings_history", "recommendations"):
             return pd.DataFrame()
         elif name == "history":
             return pd.DataFrame()

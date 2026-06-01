@@ -65,12 +65,16 @@ REC_STYLES = {
     "Exit":          {"bg": "#f9ebea", "border": "#c0392b", "text": "#7b241c"},
     "Avoid":         {"bg": "#fdecea", "border": "#e74c3c", "text": "#922b21"},
     "Sell or Trim":  {"bg": "#fdecea", "border": "#e74c3c", "text": "#922b21"},
+    # First-principles specific
+    "Avoid/Trim":    {"bg": "#fdecea", "border": "#e74c3c", "text": "#922b21"},
+    "Go":            {"bg": "#eafaf1", "border": "#27ae60", "text": "#1a7a47"},
+    "Monitor":       {"bg": "#fef9e7", "border": "#f39c12", "text": "#9a6107"},
 }
 
 
 def _normalize_report_view(report_view: str) -> str:
     view = str(report_view or "present").strip().lower()
-    return view if view in {"present", "past", "future"} else "present"
+    return view if view in {"present", "past", "future", "master"} else "present"
 
 
 def _fig_to_html(fig: go.Figure) -> str:
@@ -116,12 +120,91 @@ def _card(title: str, content: str, border_color: str = COLOR_ACCENT, icon: str 
     </div>"""
 
 
+def _data_quality_banner(metrics: AllMetrics) -> str:
+    """
+    Render a data-quality banner beneath the header.
+    Shows a stale-filing warning if > 120 days, plus decision confidence.
+    """
+    flags = getattr(metrics, "decision_confidence_flags", [])
+    confidence = getattr(metrics, "decision_confidence", 100.0)
+
+    # Staleness badge
+    staleness_badge = ""
+    days_old = None
+    label = metrics.staleness_label or ""
+    import re
+    m = re.search(r"last filing (\d+) days ago", label)
+    if m:
+        days_old = int(m.group(1))
+    if days_old is not None and days_old > 120:
+        staleness_badge = f"""
+        <span style="display:inline-flex;align-items:center;gap:6px;
+                     background:#fff3cd;border:1px solid #f0ad4e;
+                     color:#856404;border-radius:6px;
+                     padding:4px 12px;font-size:12px;font-weight:700">
+          ⚠️ Stale filing data — last filing {days_old} days ago. Verify before action.
+        </span>"""
+
+    # Decision confidence badge
+    if confidence >= 80:
+        conf_color, conf_bg, conf_border = "#145a32", "#d5f5e3", "#27ae60"
+        conf_icon = "✅"
+    elif confidence >= 60:
+        conf_color, conf_bg, conf_border = "#7d6608", "#fef9e7", "#f39c12"
+        conf_icon = "🟡"
+    elif confidence >= 40:
+        conf_color, conf_bg, conf_border = "#a04000", "#fdebd0", "#e67e22"
+        conf_icon = "🟠"
+    else:
+        conf_color, conf_bg, conf_border = "#922b21", "#fdecea", "#e74c3c"
+        conf_icon = "🔴"
+
+    flags_html = ""
+    if flags:
+        items = "".join(
+            f'<li style="margin:3px 0;font-size:12px">{f}</li>'
+            for f in flags
+        )
+        flags_html = f'<ul style="margin:6px 0 0 16px;padding:0;color:#5d6d7e">{items}</ul>'
+
+    confidence_badge = f"""
+    <div style="display:inline-flex;align-items:flex-start;gap:6px;
+                background:{conf_bg};border:1px solid {conf_border};
+                color:{conf_color};border-radius:6px;
+                padding:6px 12px;font-size:12px">
+      <div>
+        <span style="font-weight:700">{conf_icon} Decision Confidence: {confidence:.0f}%</span>
+        {flags_html}
+      </div>
+    </div>"""
+
+    if not staleness_badge and confidence >= 80 and not flags:
+        return ""  # nothing to show — data is clean
+
+    return f"""
+    <div style="max-width:1100px;margin:0 auto 0;padding:8px 20px;
+                display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start">
+      {staleness_badge}
+      {confidence_badge}
+    </div>"""
+
+
 def _score_badge(score: float) -> str:
-    """Colored score badge."""
-    color = COLOR_STRONG if score >= 7 else COLOR_OK if score >= 4 else COLOR_WEAK
+    """Colored score badge using 5-tier system."""
+    if score >= 8.0:
+        color, label = "#27ae60", "Excellent"
+    elif score >= 6.5:
+        color, label = "#52be80", "Good"
+    elif score >= 5.0:
+        color, label = "#f39c12", "Neutral"
+    elif score >= 3.5:
+        color, label = "#e67e22", "Weak"
+    else:
+        color, label = "#e74c3c", "Bad"
     return (
         f'<span style="background:{color};color:white;padding:3px 10px;'
         f'border-radius:12px;font-size:13px;font-weight:700">{score:.1f}/10</span>'
+        f'&nbsp;<span style="font-size:11px;color:{color};font-weight:600">{label}</span>'
     )
 
 
@@ -237,7 +320,8 @@ def generate_report(
     """
     view = _normalize_report_view(report_view)
     os.makedirs(outputs_dir(), exist_ok=True)
-    filename = f"ceo_report_{metrics.ticker}_{view}_{timestamp_str()}.html"
+    mode = (metrics.mode or "new").strip().lower() or "new"
+    filename = f"ceo_report_{metrics.ticker}_{mode}_{view}_{timestamp_str()}.html"
     output_path = outputs_dir() / filename
 
     html = _build_html(
@@ -257,6 +341,62 @@ def generate_report(
 
     logger.info(f"CEO Report saved to: {output_path}")
     print(f"\n✅  CEO Report saved → {output_path}")
+
+    if open_in_browser:
+        try:
+            webbrowser.open(f"file://{output_path.resolve()}")
+        except Exception as e:
+            logger.warning(f"Could not auto-open browser: {e}")
+
+    return output_path
+
+
+def generate_master_report(
+    new_metrics: AllMetrics,
+    new_panels: Dict[str, Panel],
+    new_recommendation: str,
+    new_recommendation_explanation: str,
+    new_charts: Dict[str, go.Figure],
+    existing_metrics: AllMetrics,
+    existing_panels: Dict[str, Panel],
+    existing_recommendation: str,
+    existing_recommendation_explanation: str,
+    existing_charts: Dict[str, go.Figure],
+    first_principles_report: Optional["FirstPrinciplesReport"] = None,
+    notes: str = "",
+    open_in_browser: bool = True,
+    peer_metrics: Optional[Dict[str, AllMetrics]] = None,
+) -> Path:
+    """
+    Generate the master CEO HTML report combining New Position and Existing Holding
+    across Present, Past, and Future views into a single self-contained HTML file.
+    """
+    os.makedirs(outputs_dir(), exist_ok=True)
+    ticker = new_metrics.ticker
+    filename = f"ceo_report_{ticker}_master_{timestamp_str()}.html"
+    output_path = outputs_dir() / filename
+
+    html = _build_master_html(
+        new_metrics=new_metrics,
+        new_panels=new_panels,
+        new_recommendation=new_recommendation,
+        new_recommendation_explanation=new_recommendation_explanation,
+        new_charts=new_charts,
+        existing_metrics=existing_metrics,
+        existing_panels=existing_panels,
+        existing_recommendation=existing_recommendation,
+        existing_recommendation_explanation=existing_recommendation_explanation,
+        existing_charts=existing_charts,
+        first_principles_report=first_principles_report,
+        notes=notes,
+        peer_metrics=peer_metrics,
+    )
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+    logger.info(f"Master CEO Report saved to: {output_path}")
+    print(f"\n✅  Master CEO Report saved → {output_path}")
 
     if open_in_browser:
         try:
@@ -300,7 +440,8 @@ def _build_html(
     )
 
 
-def _build_present_html(
+
+def _present_inner_content(
     metrics: AllMetrics,
     panels: Dict[str, Panel],
     recommendation: str,
@@ -308,37 +449,13 @@ def _build_present_html(
     charts: Dict[str, go.Figure],
     peer_metrics: Optional[Dict[str, AllMetrics]] = None,
     notes: str = "",
+    gen_time: Optional[str] = None,
 ) -> str:
+    """Inner body content for the Present view — excludes header, data_quality_banner, and container div."""
     m = metrics
-    mode_label = "Existing Holding" if m.mode == "existing" else "New Position Analysis"
-    gen_time = datetime.now().strftime("%B %d, %Y %H:%M")
+    if gen_time is None:
+        gen_time = datetime.now().strftime("%B %d, %Y %H:%M")
 
-    # ── Plotly JS (loaded once from CDN) ─────────────────────────────────────
-    plotly_cdn = '<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>'
-
-    # ── Header ────────────────────────────────────────────────────────────────
-    header = f"""
-    <div style="background:linear-gradient(135deg,#1a252f,#2c3e50);
-                padding:32px 40px;color:white;border-radius:0 0 12px 12px;margin-bottom:24px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">
-        <div>
-          <div style="font-size:13px;text-transform:uppercase;letter-spacing:2px;opacity:0.7;margin-bottom:4px">
-            Stock Fundamentals CEO Dashboard
-          </div>
-          <div style="font-size:42px;font-weight:900;letter-spacing:2px">{m.ticker}</div>
-          <div style="font-size:18px;opacity:0.85;margin-top:2px">{m.company_name}</div>
-          <div style="font-size:12px;opacity:0.6;margin-top:8px">{mode_label}</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-size:13px;opacity:0.7">Generated</div>
-          <div style="font-size:15px;font-weight:600">{gen_time}</div>
-          <div style="font-size:11px;opacity:0.6;margin-top:4px">{m.staleness_label}</div>
-          {_overall_score_widget(m.overall_score)}
-        </div>
-      </div>
-    </div>"""
-
-    # ── Executive Summary ─────────────────────────────────────────────────────
     current_price_str = fmt_currency(m.q6.current_price) if m.q6.current_price else "N/A"
     market_cap_str = fmt_currency(m.q1.market_cap) if m.q1.market_cap else "N/A"
     sector_str = m.q1.sector or "N/A"
@@ -366,16 +483,12 @@ def _build_present_html(
     </div>"""
 
     exec_card = _card("Company Snapshot", exec_summary, border_color=COLOR_ACCENT, icon="📊")
-
-    # ── Recommendation box ────────────────────────────────────────────────────
     rec_box = _recommendation_box(recommendation, recommendation_explanation)
 
-    # ── Decision Audit card ───────────────────────────────────────────────────
     decision_audit_html = ""
     if "decision_audit" in panels and panels["decision_audit"]:
         decision_audit_html = _decision_audit_card_html(panels["decision_audit"])
 
-    # ── Score summary ─────────────────────────────────────────────────────────
     score_rows = "".join(
         _metric_row(k, _score_badge(v))
         for k, v in m.scores.items()
@@ -383,57 +496,35 @@ def _build_present_html(
     score_table = f'<table style="width:100%;border-collapse:collapse">{score_rows}</table>'
     score_card = _card("Fundamental Scores — 6 Questions", score_table, border_color=COLOR_ACCENT, icon="🎯")
 
-    # Color legend
     legend_html = color_legend_html()
-
-    # CEO Decision Summary
     ceo_summary = _build_ceo_decision_summary(m, recommendation, recommendation_explanation)
 
-    # Scorecard chart
     scorecard_chart_html = ""
     if "scorecard_bars" in charts:
         scorecard_chart_html = _fig_to_html(charts["scorecard_bars"])
     if "scorecard_radar" in charts:
         scorecard_chart_html += _fig_to_html(charts["scorecard_radar"])
 
-    # ── 6 Questions detail ────────────────────────────────────────────────────
     q_sections = _build_6q_sections(m, charts)
 
-    # ── Panels ────────────────────────────────────────────────────────────────
     panel_sections = []
-
     if "bullish" in panels:
-        panel_sections.append(_panel_to_html(
-            panels["bullish"], border=COLOR_STRONG, icon="✅"
-        ))
+        panel_sections.append(_panel_to_html(panels["bullish"], border=COLOR_STRONG, icon="✅"))
     if "hold" in panels:
-        panel_sections.append(_panel_to_html(
-            panels["hold"], border=COLOR_OK, icon="⏸️"
-        ))
+        panel_sections.append(_panel_to_html(panels["hold"], border=COLOR_OK, icon="⏸️"))
     if "bearish" in panels:
-        panel_sections.append(_panel_to_html(
-            panels["bearish"], border=COLOR_WEAK, icon="⚠️", is_warning=True
-        ))
+        panel_sections.append(_panel_to_html(panels["bearish"], border=COLOR_WEAK, icon="⚠️", is_warning=True))
     if "dividends" in panels:
-        panel_sections.append(_panel_to_html(
-            panels["dividends"], border=COLOR_ACCENT, icon="💰"
-        ))
+        panel_sections.append(_panel_to_html(panels["dividends"], border=COLOR_ACCENT, icon="💰"))
     if "portfolio" in panels and panels["portfolio"]:
-        panel_sections.append(_panel_to_html(
-            panels["portfolio"], border="#8e44ad", icon="📁"
-        ))
+        panel_sections.append(_panel_to_html(panels["portfolio"], border="#8e44ad", icon="📁"))
     if "ml" in panels and panels["ml"]:
-        panel_sections.append(_panel_to_html(
-            panels["ml"], border="#2c3e50", icon="🤖", is_ml=True
-        ))
-    # decision_audit is rendered separately as a card near the top — skip here
+        panel_sections.append(_panel_to_html(panels["ml"], border="#2c3e50", icon="🤖", is_ml=True))
 
-    # ── Peer comparison (optional) ─────────────────────────────────────────────
     peer_section = ""
     if peer_metrics:
         peer_section = _build_peer_section(m, peer_metrics)
 
-    # ── Price history chart ────────────────────────────────────────────────────
     price_chart_html = ""
     if "price_history" in charts:
         price_chart_html = f"""
@@ -442,7 +533,6 @@ def _build_present_html(
           {_fig_to_html(charts["price_history"])}
         </div>"""
 
-    # ── Notes ─────────────────────────────────────────────────────────────────
     notes_html = ""
     if notes or m.notes:
         note_text = notes or m.notes
@@ -453,7 +543,6 @@ def _build_present_html(
             icon="📝",
         )
 
-    # ── Footer ─────────────────────────────────────────────────────────────────
     footer = f"""
     <div style="text-align:center;color:{COLOR_NEUTRAL};font-size:12px;padding:32px 16px;
                 border-top:1px solid #ecf0f1;margin-top:40px">
@@ -465,10 +554,7 @@ def _build_present_html(
       </p>
     </div>"""
 
-    # ── Assemble ───────────────────────────────────────────────────────────────
-    body = "\n".join([
-        header,
-        '<div style="max-width:1100px;margin:0 auto;padding:0 20px">',
+    return "\n".join([
         exec_card,
         rec_box,
         decision_audit_html,
@@ -482,6 +568,62 @@ def _build_present_html(
         peer_section,
         notes_html,
         footer,
+    ])
+
+
+def _build_present_html(
+    metrics: AllMetrics,
+    panels: Dict[str, Panel],
+    recommendation: str,
+    recommendation_explanation: str,
+    charts: Dict[str, go.Figure],
+    peer_metrics: Optional[Dict[str, AllMetrics]] = None,
+    notes: str = "",
+) -> str:
+    m = metrics
+    mode_label = "Existing Holding" if m.mode == "existing" else "New Position Analysis"
+    gen_time = datetime.now().strftime("%B %d, %Y %H:%M")
+
+    plotly_cdn = '<script src="https://cdn.plot.ly/plotly-3.5.0.min.js"></script>'
+
+    header = f"""
+    <div style="background:linear-gradient(135deg,#1a252f,#2c3e50);
+                padding:32px 40px;color:white;border-radius:0 0 12px 12px;margin-bottom:24px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">
+        <div>
+          <div style="font-size:13px;text-transform:uppercase;letter-spacing:2px;opacity:0.7;margin-bottom:4px">
+            Stock Fundamentals CEO Dashboard
+          </div>
+          <div style="font-size:42px;font-weight:900;letter-spacing:2px">{m.ticker}</div>
+          <div style="font-size:18px;opacity:0.85;margin-top:2px">{m.company_name}</div>
+          <div style="font-size:12px;opacity:0.6;margin-top:8px">{mode_label}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:13px;opacity:0.7">Generated</div>
+          <div style="font-size:15px;font-weight:600">{gen_time}</div>
+          <div style="font-size:11px;opacity:0.6;margin-top:4px">{m.staleness_label}</div>
+          {_overall_score_widget(m.overall_score)}
+        </div>
+      </div>
+    </div>"""
+
+    data_quality_banner = _data_quality_banner(metrics)
+    inner = _present_inner_content(
+        metrics=metrics,
+        panels=panels,
+        recommendation=recommendation,
+        recommendation_explanation=recommendation_explanation,
+        charts=charts,
+        peer_metrics=peer_metrics,
+        notes=notes,
+        gen_time=gen_time,
+    )
+
+    body = "\n".join([
+        header,
+        data_quality_banner,
+        '<div style="max-width:1100px;margin:0 auto;padding:0 20px">',
+        inner,
         "</div>",
     ])
 
@@ -536,7 +678,6 @@ def _build_present_html(
 {body}
 </body>
 </html>"""
-
 
 _SIGNAL_COLORS = {
     "Strong": COLOR_STRONG,
@@ -883,80 +1024,416 @@ def _first_principles_question_card(question: "QuestionResult", sector: Optional
     return _card(f"{question.question_id} Signal Card", content, border_color=color, icon="🧭")
 
 
-def _build_first_principles_html(
-    metrics: AllMetrics,
-    panels: Dict[str, Panel],
-    recommendation: str,
-    recommendation_explanation: str,
-    notes: str,
-    report_view: str,
-    first_principles_report: Optional["FirstPrinciplesReport"],
-) -> str:
-    m = metrics
-    mode_label = "Existing Holding" if m.mode == "existing" else "New Position Analysis"
-    gen_time = datetime.now().strftime("%B %d, %Y %H:%M")
-    view = _normalize_report_view(report_view)
-    view_title = "Past" if view == "past" else "Future"
+# ── First-principles dashboard helper functions ───────────────────────────────
 
-    plotly_cdn = '<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>'
-    header = f"""
-    <div style="background:linear-gradient(135deg,#1a252f,#2c3e50);
-                padding:32px 40px;color:white;border-radius:0 0 12px 12px;margin-bottom:24px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">
-        <div>
-          <div style="font-size:13px;text-transform:uppercase;letter-spacing:2px;opacity:0.7;margin-bottom:4px">
-            Stock Fundamentals CEO Dashboard
-          </div>
-          <div style="font-size:42px;font-weight:900;letter-spacing:2px">{m.ticker}</div>
-          <div style="font-size:18px;opacity:0.85;margin-top:2px">{m.company_name}</div>
-          <div style="font-size:12px;opacity:0.75;margin-top:8px">{mode_label} · First-Principles {view_title} View</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-size:13px;opacity:0.7">Generated</div>
-          <div style="font-size:15px;font-weight:600">{gen_time}</div>
-          <div style="font-size:11px;opacity:0.6;margin-top:4px">{m.staleness_label}</div>
-          {_overall_score_widget(m.overall_score)}
+def _fp_hard_fail_banner(falsification_reasons: List[str]) -> str:
+    """Prominent red alert bar when one or more questions triggered a hard fail."""
+    if not falsification_reasons:
+        return ""
+    items = "".join(
+        f'<li style="margin:4px 0;font-size:13px">{escape(r)}</li>'
+        for r in falsification_reasons
+    )
+    return f"""
+    <div style="background:#fdecea;border:2px solid #c0392b;border-radius:8px;
+                padding:16px 20px;margin:0 0 16px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <span style="font-size:20px">🚨</span>
+        <strong style="font-size:15px;color:#7b241c">Hard Fail — Falsification Breach Detected</strong>
+      </div>
+      <ul style="margin:0;padding-left:20px;color:#922b21">{items}</ul>
+      <div style="margin-top:8px;font-size:12px;color:#c0392b;font-style:italic">
+        A hard fail means at least one core investment principle is violated. The recommendation is
+        automatically downgraded regardless of other signal counts.
+      </div>
+    </div>"""
+
+
+def _fp_staleness_warning(staleness_label: str) -> str:
+    """Warns prominently when filing data is old — critical for FP analysis."""
+    import re
+    m = re.search(r"last filing (\d+) days ago", staleness_label or "")
+    if not m:
+        return ""
+    days = int(m.group(1))
+    if days <= 120:
+        return ""
+    months = days // 30
+    return f"""
+    <div style="background:#fff3cd;border:2px solid #f0ad4e;border-radius:8px;
+                padding:14px 18px;margin:0 0 16px;display:flex;gap:12px;align-items:flex-start">
+      <span style="font-size:20px;flex-shrink:0">⚠️</span>
+      <div>
+        <strong style="font-size:14px;color:#856404">
+          Stale Fundamental Data — Last Filing ~{months} Months Ago ({days} Days)
+        </strong>
+        <div style="font-size:13px;color:#856404;margin-top:4px">
+          First-principles signals rely on point-in-time SEC filings. Data this old may predate
+          material business changes. <strong>Verify with the latest 10-K/10-Q before acting.</strong>
         </div>
       </div>
     </div>"""
 
-    questions = []
+
+def _fp_signal_scorecard(questions: list) -> str:
+    """Compact table of all P/F signal cards: ID → question short-form → signal badge → one-line takeaway."""
+    if not questions:
+        return ""
+
+    # Short labels per question_id
+    _SHORT_Q = {
+        "P1": "Did per-share owner earnings compound in real terms?",
+        "P2": "Did incremental capital earn attractive returns?",
+        "P3": "Is earnings quality high (accruals low)?",
+        "P4": "Was growth funded internally (not dilution/leverage)?",
+        "P5": "Did capital allocation create value?",
+        "P6": "Did the business survive stress periods?",
+        "F1": "Is reinvestment runway still attractive?",
+        "F2": "What is the 5Y owner-earnings distribution?",
+        "F3": "Can margins sustain the base-case scenario?",
+        "F4": "Can the balance sheet survive a stress scenario?",
+        "F5": "What growth is implied by today's price?",
+        "F6": "What is expected return without multiple expansion?",
+    }
+
+    rows = ""
+    for q in questions:
+        qid = str(getattr(q, "question_id", ""))
+        signal = str(getattr(q, "signal", "Insufficient"))
+        color = _SIGNAL_COLORS.get(signal, COLOR_NEUTRAL)
+        takeaway = escape(str(getattr(q, "takeaway", "") or getattr(q, "decision_reason", ""))[:120])
+        if len(getattr(q, "takeaway", "") or "") > 120:
+            takeaway += "…"
+        short_q = _SHORT_Q.get(qid, escape(str(getattr(q, "question", "")))[:80])
+        falsified = bool(getattr(q, "falsified", False))
+        fail_icon = ' <span title="Hard fail" style="color:#e74c3c">⚡</span>' if falsified else ""
+
+        coverage = getattr(q, "coverage", None)
+        cov_ratio = float(getattr(coverage, "coverage_ratio", float("nan")))
+        cov_color = COLOR_STRONG if cov_ratio >= 0.85 else COLOR_OK if cov_ratio >= 0.70 else COLOR_WEAK
+        cov_str = f"{cov_ratio:.0%}" if math.isfinite(cov_ratio) else "N/A"
+
+        rows += f"""
+        <tr style="border-bottom:1px solid #ecf0f1;vertical-align:middle">
+          <td style="padding:8px 12px;font-weight:700;color:{color};font-size:13px;white-space:nowrap">
+            {escape(qid)}{fail_icon}
+          </td>
+          <td style="padding:8px 12px;font-size:12px;color:{COLOR_NEUTRAL};max-width:240px">{short_q}</td>
+          <td style="padding:8px 12px;text-align:center">
+            <span style="background:{color};color:white;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700">{escape(signal)}</span>
+          </td>
+          <td style="padding:8px 12px;font-size:12px;color:{COLOR_TEXT};max-width:320px">{takeaway}</td>
+          <td style="padding:8px 12px;text-align:center">
+            <span style="font-size:11px;color:{cov_color};font-weight:600">{cov_str}</span>
+          </td>
+        </tr>"""
+
+    content = f"""
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;min-width:640px">
+        <thead>
+          <tr style="background:#f4f6f7;border-bottom:2px solid #d5d8dc">
+            <th style="padding:8px 12px;text-align:left;font-size:12px;color:{COLOR_NEUTRAL};width:50px">ID</th>
+            <th style="padding:8px 12px;text-align:left;font-size:12px;color:{COLOR_NEUTRAL}">Question</th>
+            <th style="padding:8px 12px;text-align:center;font-size:12px;color:{COLOR_NEUTRAL}">Signal</th>
+            <th style="padding:8px 12px;text-align:left;font-size:12px;color:{COLOR_NEUTRAL}">Key Finding</th>
+            <th style="padding:8px 12px;text-align:center;font-size:12px;color:{COLOR_NEUTRAL}">Coverage</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>"""
+    return _card("Signal Scorecard — All Questions at a Glance", content, border_color=COLOR_ACCENT, icon="📋")
+
+
+def _fp_investor_decision_card(
+    questions: list,
+    decision: str,
+    hard_fail: bool,
+    view: str,
+    metrics: "AllMetrics",
+    synthesis_counts: Dict[str, int],
+) -> str:
+    """Answers the 7 investor decision questions in a structured card."""
+
+    # ── What is the company? ──────────────────────────────────────────────────
+    company_name = escape(getattr(metrics, "company_name", "") or metrics.ticker)
+    sector = escape(metrics.q1.sector or "N/A")
+    price_str = fmt_currency(metrics.q6.current_price) if metrics.q6.current_price else "N/A"
+    market_cap_str = fmt_currency(metrics.q1.market_cap) if metrics.q1.market_cap else "N/A"
+    company_html = (
+        f'<strong>{company_name}</strong> ({escape(metrics.ticker)}) — '
+        f'{sector} · Price {price_str} · Market Cap {market_cap_str}'
+    )
+
+    # ── What is the recommendation? ──────────────────────────────────────────
+    style = REC_STYLES.get(decision, REC_STYLES["Hold"])
+    rec_html = (
+        f'<span style="background:{style["border"]};color:white;padding:4px 14px;'
+        f'border-radius:6px;font-weight:900;font-size:16px;letter-spacing:0.5px">'
+        f'{escape(decision)}</span>'
+    )
+
+    # ── Why? ─────────────────────────────────────────────────────────────────
+    strong = synthesis_counts.get("Strong", 0)
+    watch = synthesis_counts.get("Watch", 0)
+    weak = synthesis_counts.get("Weak", 0)
+    insuff = synthesis_counts.get("Insufficient", 0)
+    total = strong + watch + weak + insuff
+    view_label = "past" if view == "past" else "forward"
+    if hard_fail:
+        why_text = (
+            f"At least one {view_label} first-principles question triggered a hard fail "
+            f"(falsification breach), which automatically drives the recommendation to Avoid/Trim "
+            f"regardless of other signals."
+        )
+    elif weak >= 2:
+        why_text = (
+            f"Two or more {view_label} questions are Weak ({weak}/{total}), indicating that "
+            f"core investment principles are not being met. The Avoid/Trim recommendation reflects "
+            f"this pattern of deteriorating fundamentals."
+        )
+    elif strong >= 4 and weak == 0:
+        why_text = (
+            f"{strong} of {total} {view_label} questions are Strong with zero Weak signals, "
+            f"indicating the investment thesis is robustly supported across all key dimensions."
+        )
+    elif insuff >= 3:
+        why_text = (
+            f"{insuff} of {total} {view_label} questions have Insufficient data coverage. "
+            f"The Monitor recommendation reflects that the thesis cannot be fully confirmed or denied "
+            f"without more complete data."
+        )
+    else:
+        why_text = (
+            f"The {view_label} scan shows {strong} Strong, {watch} Watch, {weak} Weak, and "
+            f"{insuff} Insufficient signals out of {total} total. The mix is not compelling enough "
+            f"for a Go decision but not weak enough for Avoid."
+        )
+
+    # ── Main strength ─────────────────────────────────────────────────────────
+    strong_questions = [q for q in questions if str(getattr(q, "signal", "")) == "Strong"]
+    strength_html = '<span style="color:#7f8c8d;font-style:italic">No strong signals identified.</span>'
+    if strong_questions:
+        sq = strong_questions[0]
+        sq_takeaway = escape(str(getattr(sq, "takeaway", "") or getattr(sq, "decision_reason", ""))[:200])
+        strength_html = (
+            f'<strong style="color:{COLOR_STRONG}">{escape(sq.question_id)}:</strong> '
+            f'{sq_takeaway}'
+        )
+
+    # ── Main risk ─────────────────────────────────────────────────────────────
+    risk_questions = [q for q in questions if bool(getattr(q, "falsified", False))] or \
+                     [q for q in questions if str(getattr(q, "signal", "")) == "Weak"]
+    risk_html = '<span style="color:#7f8c8d;font-style:italic">No significant risk signals identified.</span>'
+    if risk_questions:
+        rq = risk_questions[0]
+        rq_takeaway = escape(str(getattr(rq, "takeaway", "") or getattr(rq, "decision_reason", ""))[:200])
+        icon = "⚡" if bool(getattr(rq, "falsified", False)) else "⚠️"
+        strength_html_color = COLOR_WEAK
+        risk_html = (
+            f'<strong style="color:{COLOR_WEAK}">{escape(rq.question_id)} {icon}:</strong> '
+            f'{rq_takeaway}'
+        )
+
+    # ── Missing / stale data ──────────────────────────────────────────────────
+    insuff_questions = [q for q in questions if str(getattr(q, "signal", "")) == "Insufficient"]
+    missing_parts = []
+    for q in insuff_questions:
+        cov = getattr(q, "coverage", None)
+        missing_fields = list(getattr(cov, "missing_fields", []))
+        if missing_fields:
+            missing_parts.append(
+                f'<strong style="color:{COLOR_NEUTRAL}">{escape(q.question_id)}:</strong> '
+                f'missing {escape(", ".join(missing_fields[:4]))}'
+                + (" + more" if len(missing_fields) > 4 else "")
+            )
+        else:
+            missing_parts.append(f'<strong style="color:{COLOR_NEUTRAL}">{escape(q.question_id)}:</strong> low coverage')
+
+    import re
+    days_old = None
+    m_stale = re.search(r"last filing (\d+) days ago", metrics.staleness_label or "")
+    if m_stale:
+        days_old = int(m_stale.group(1))
+    if days_old and days_old > 120:
+        stale_note = (
+            f'<div style="margin-top:6px;font-size:12px;color:#856404">'
+            f'⚠️ Underlying filing data is <strong>{days_old} days old</strong> '
+            f'(~{days_old // 30} months). All signals based on this stale data.</div>'
+        )
+    else:
+        stale_note = ""
+
+    if missing_parts:
+        missing_html = "<br>".join(missing_parts) + stale_note
+    elif stale_note:
+        missing_html = stale_note
+    else:
+        missing_html = '<span style="color:#27ae60;font-style:italic">All required data fields are available.</span>'
+
+    # ── What would change the action? ────────────────────────────────────────
+    if decision in ("Go",):
+        flip_html = (
+            f'<span style="color:{COLOR_WEAK}">This becomes Monitor if</span>: '
+            f'any {view_label} question weakens to Watch or below, coverage drops on key fields, '
+            f'or macro conditions change the hurdle rate assumptions.'
+        )
+    elif decision in ("Avoid/Trim", "Avoid"):
+        flip_html = (
+            f'<span style="color:{COLOR_OK}">This becomes Monitor if</span>: '
+            f'hard-fail conditions are resolved (e.g., next filing restores data coverage), '
+            f'weak signal count drops below 2, or valuation improves materially. '
+            f'<span style="color:{COLOR_STRONG}">This becomes Go if</span>: '
+            f'≥4 questions reach Strong with zero Weak.'
+        )
+    else:  # Monitor
+        flip_html = (
+            f'<span style="color:{COLOR_STRONG}">This becomes Go if</span>: '
+            f'≥4 of {total} {view_label} questions reach Strong with zero Weak signals and no hard fail. '
+            f'<span style="color:{COLOR_WEAK}">This becomes Avoid/Trim if</span>: '
+            f'≥2 questions become Weak, or a falsification breach is triggered.'
+        )
+
+    def _row(label: str, content: str, label_color: str = COLOR_NEUTRAL) -> str:
+        return f"""
+        <tr style="border-bottom:1px solid #f0f3f4">
+          <td style="padding:10px 14px;font-size:13px;font-weight:700;color:{label_color};
+                     white-space:nowrap;vertical-align:top;width:28%">{label}</td>
+          <td style="padding:10px 14px;font-size:13px;color:{COLOR_TEXT};line-height:1.5">{content}</td>
+        </tr>"""
+
+    table_body = (
+        _row("🏢 The Company", company_html)
+        + _row("🎯 Recommendation", rec_html)
+        + _row("💡 Why", why_text)
+        + _row("✅ Main Strength", strength_html)
+        + _row("⚠️ Main Risk", risk_html)
+        + _row("📭 Missing / Stale Data", missing_html)
+        + _row("🔄 What Would Change This", flip_html)
+    )
+
+    content = f"""
+    <table style="width:100%;border-collapse:collapse">
+      {table_body}
+    </table>"""
+    return _card(
+        "Investment Decision Summary",
+        content,
+        border_color=style["border"],
+        icon="🧠",
+    )
+
+
+def _fp_header_score_widget(synthesis_counts: Dict[str, int], hard_fail: bool) -> str:
+    """Signal-count widget for the past/future report header (replaces present-view score)."""
+    strong = synthesis_counts.get("Strong", 0)
+    watch = synthesis_counts.get("Watch", 0)
+    weak = synthesis_counts.get("Weak", 0)
+    insuff = synthesis_counts.get("Insufficient", 0)
+    total = strong + watch + weak + insuff
+
+    badges = ""
+    for label, count, color in [
+        ("Strong", strong, "#27ae60"),
+        ("Watch", watch, "#f39c12"),
+        ("Weak", weak, "#e74c3c"),
+        ("N/A", insuff, "#7f8c8d"),
+    ]:
+        if count > 0:
+            badges += (
+                f'<span style="display:inline-block;background:{color};color:white;'
+                f'border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin:1px 2px">'
+                f'{count} {label}</span>'
+            )
+    fail_badge = ""
+    if hard_fail:
+        fail_badge = (
+            '<div style="margin-top:4px">'
+            '<span style="background:#c0392b;color:white;border-radius:4px;'
+            'padding:2px 8px;font-size:11px;font-weight:700">⚡ HARD FAIL</span>'
+            '</div>'
+        )
+    return f"""
+    <div style="margin-top:10px;text-align:right">
+      <div style="font-size:10px;opacity:0.7;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">
+        Signals ({total} questions)
+      </div>
+      <div>{badges}</div>
+      {fail_badge}
+    </div>"""
+
+
+
+def _compute_fp_questions_state(
+    first_principles_report: Optional["FirstPrinciplesReport"],
+    view: str,
+    recommendation: str,
+) -> Tuple[list, str, Dict[str, int], bool, List[str]]:
+    """Compute question state for a given FP view (past or future).
+
+    Returns (questions, decision, synthesis_counts, hard_fail, falsification_reasons).
+    """
+    questions: list = []
     decision = recommendation
-    rec_explanation = recommendation_explanation
-    synthesis_counts = {"Strong": 0, "Watch": 0, "Weak": 0, "Insufficient": 0}
+    synthesis_counts: Dict[str, int] = {"Strong": 0, "Watch": 0, "Weak": 0, "Insufficient": 0}
     hard_fail = False
+    falsification_reasons: List[str] = []
 
     if first_principles_report is not None:
         all_questions = list(getattr(first_principles_report, "questions", []) or [])
-        if view == "past":
-            questions = [q for q in all_questions if str(getattr(q, "question_id", "")).upper().startswith("P")]
-        else:
-            questions = [q for q in all_questions if str(getattr(q, "question_id", "")).upper().startswith("F")]
+        prefix = "P" if view == "past" else "F"
+        questions = [q for q in all_questions if str(getattr(q, "question_id", "")).upper().startswith(prefix)]
         questions = sorted(questions, key=lambda q: str(getattr(q, "question_id", "")))
         for q in questions:
             sig = str(getattr(q, "signal", "Insufficient"))
             synthesis_counts[sig] = synthesis_counts.get(sig, 0) + 1
-            hard_fail = hard_fail or bool(getattr(q, "falsified", False))
+            if bool(getattr(q, "falsified", False)):
+                hard_fail = True
+                reason = str(getattr(q, "falsification_reason", "") or "")
+                if reason:
+                    falsification_reasons.append(f"{getattr(q, 'question_id', '?')}: {reason}")
 
         strong_count = synthesis_counts.get("Strong", 0)
         weak_count = synthesis_counts.get("Weak", 0)
-        insuff_count = synthesis_counts.get("Insufficient", 0)
         if hard_fail or weak_count >= 2:
             decision = "Avoid/Trim"
         elif strong_count >= 4 and weak_count == 0:
             decision = "Go"
-        elif insuff_count >= 3:
-            decision = "Monitor"
         else:
             decision = "Monitor"
-        rec_explanation = (
-            f"{view_title} first-principles scan: Strong {synthesis_counts.get('Strong', 0)}, "
-            f"Watch {synthesis_counts.get('Watch', 0)}, Weak {synthesis_counts.get('Weak', 0)}, "
-            f"Insufficient {synthesis_counts.get('Insufficient', 0)}."
-        )
 
-    rec_box = _recommendation_box(decision, rec_explanation)
+    return questions, decision, synthesis_counts, hard_fail, falsification_reasons
 
+
+def _fp_inner_content(
+    metrics: AllMetrics,
+    recommendation: str,
+    recommendation_explanation: str,
+    notes: str,
+    first_principles_report: Optional["FirstPrinciplesReport"],
+    report_view: str,
+    gen_time: Optional[str] = None,
+) -> str:
+    """Inner body content for a FP view — excludes outer header and container div."""
+    m = metrics
+    if gen_time is None:
+        gen_time = datetime.now().strftime("%B %d, %Y %H:%M")
+    view = _normalize_report_view(report_view)
+    view_title = "Past" if view == "past" else "Future"
+
+    questions, decision, synthesis_counts, hard_fail, falsification_reasons = _compute_fp_questions_state(
+        first_principles_report, view, recommendation
+    )
+
+    hard_fail_banner = _fp_hard_fail_banner(falsification_reasons) if hard_fail else ""
+    staleness_warning = _fp_staleness_warning(m.staleness_label or "")
+    data_quality_banner_html = _data_quality_banner(metrics)
+
+    hf_cell = (
+        "<strong style='color:#e74c3c'>YES — Falsification Breach</strong>"
+        if hard_fail else "No"
+    )
     snapshot = _card(
         "Company Snapshot",
         f"""
@@ -968,10 +1445,10 @@ def _build_first_principles_html(
             {_metric_row("Cap Category", m.q1.cap_category or "N/A")}
           </table>
           <table style="width:100%;border-collapse:collapse">
-            {_metric_row("Report View", view_title)}
-            {_metric_row("Strong / Watch", f"{synthesis_counts.get('Strong', 0)} / {synthesis_counts.get('Watch', 0)}")}
-            {_metric_row("Weak / Insufficient", f"{synthesis_counts.get('Weak', 0)} / {synthesis_counts.get('Insufficient', 0)}")}
-            {_metric_row("Hard Fail Triggered", "Yes" if hard_fail else "No")}
+            {_metric_row("View", view_title + " First-Principles")}
+            {_metric_row("Data Freshness", m.staleness_label or "N/A")}
+            {_metric_row("Questions Assessed", str(len(questions)))}
+            {_metric_row("Hard Fail", hf_cell)}
           </table>
         </div>
         """,
@@ -979,7 +1456,18 @@ def _build_first_principles_html(
         icon="📊",
     )
 
-    question_cards = ""
+    decision_card = _fp_investor_decision_card(
+        questions=questions,
+        decision=decision,
+        hard_fail=hard_fail,
+        view=view,
+        metrics=m,
+        synthesis_counts=synthesis_counts,
+    )
+
+    rec_box = _recommendation_box(decision, recommendation_explanation)
+    scorecard = _fp_signal_scorecard(questions)
+
     if not questions:
         question_cards = _card(
             f"{view_title} Question Cards",
@@ -1011,18 +1499,85 @@ def _build_first_principles_html(
       </p>
     </div>"""
 
-    body = "\n".join(
-        [
-            header,
-            '<div style="max-width:1100px;margin:0 auto;padding:0 20px">',
-            snapshot,
-            rec_box,
-            question_cards,
-            notes_html,
-            footer,
-            "</div>",
-        ]
+    detail_divider = (
+        f'<h2 style="font-size:17px;font-weight:700;color:{COLOR_TEXT};'
+        f'margin:36px 0 16px;padding-top:12px;border-top:2px solid #ecf0f1">'
+        f'📂 Detailed Analysis — Individual Question Cards</h2>'
     )
+
+    return "\n".join([
+        hard_fail_banner,
+        staleness_warning,
+        data_quality_banner_html,
+        snapshot,
+        decision_card,
+        rec_box,
+        scorecard,
+        detail_divider,
+        question_cards,
+        notes_html,
+        footer,
+    ])
+
+
+def _build_first_principles_html(
+    metrics: AllMetrics,
+    panels: Dict[str, Panel],
+    recommendation: str,
+    recommendation_explanation: str,
+    notes: str,
+    report_view: str,
+    first_principles_report: Optional["FirstPrinciplesReport"],
+) -> str:
+    m = metrics
+    mode_label = "Existing Holding" if m.mode == "existing" else "New Position Analysis"
+    gen_time = datetime.now().strftime("%B %d, %Y %H:%M")
+    view = _normalize_report_view(report_view)
+    view_title = "Past" if view == "past" else "Future"
+
+    # Need synthesis_counts and hard_fail for the header score widget
+    _, _, synthesis_counts, hard_fail, _ = _compute_fp_questions_state(
+        first_principles_report, view, recommendation
+    )
+
+    plotly_cdn = '<script src="https://cdn.plot.ly/plotly-3.5.0.min.js"></script>'
+    header = f"""
+    <div style="background:linear-gradient(135deg,#1a252f,#2c3e50);
+                padding:32px 40px;color:white;border-radius:0 0 12px 12px;margin-bottom:24px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">
+        <div>
+          <div style="font-size:13px;text-transform:uppercase;letter-spacing:2px;opacity:0.7;margin-bottom:4px">
+            Stock Fundamentals CEO Dashboard
+          </div>
+          <div style="font-size:42px;font-weight:900;letter-spacing:2px">{m.ticker}</div>
+          <div style="font-size:18px;opacity:0.85;margin-top:2px">{m.company_name}</div>
+          <div style="font-size:12px;opacity:0.75;margin-top:8px">{mode_label} · First-Principles {view_title} View</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:13px;opacity:0.7">Generated</div>
+          <div style="font-size:15px;font-weight:600">{gen_time}</div>
+          <div style="font-size:11px;opacity:0.6;margin-top:4px">{m.staleness_label}</div>
+          {_fp_header_score_widget(synthesis_counts, hard_fail)}
+        </div>
+      </div>
+    </div>"""
+
+    inner = _fp_inner_content(
+        metrics=metrics,
+        recommendation=recommendation,
+        recommendation_explanation=recommendation_explanation,
+        notes=notes,
+        first_principles_report=first_principles_report,
+        report_view=view,
+        gen_time=gen_time,
+    )
+
+    body = "\n".join([
+        header,
+        '<div style="max-width:1100px;margin:0 auto;padding:0 20px">',
+        inner,
+        "</div>",
+    ])
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1054,9 +1609,17 @@ def _build_first_principles_html(
 </body>
 </html>"""
 
-
 def _overall_score_widget(score: float) -> str:
-    color = "#27ae60" if score >= 7 else "#f39c12" if score >= 4 else "#e74c3c"
+    if score >= 8.0:
+        color = "#27ae60"
+    elif score >= 6.5:
+        color = "#52be80"
+    elif score >= 5.0:
+        color = "#f39c12"
+    elif score >= 3.5:
+        color = "#e67e22"
+    else:
+        color = "#e74c3c"
     return f"""
     <div style="margin-top:12px;text-align:center">
       <div style="font-size:11px;opacity:0.7;text-transform:uppercase;letter-spacing:1px">Overall Score</div>
@@ -1182,7 +1745,8 @@ def _build_6q_sections(m: AllMetrics, charts: Dict[str, go.Figure]) -> str:
         q4_ctx.append(("FCF at Purchase", fmt_currency(m.q4.fcf_at_purchase)))
 
     chart_html = ""
-    if "q4_cashflow_bars" in charts: chart_html += _fig_to_html(charts["q4_cashflow_bars"])
+    if "q4_cashflow_waterfall" in charts: chart_html += _fig_to_html(charts["q4_cashflow_waterfall"])
+    elif "q4_cashflow_bars" in charts: chart_html += _fig_to_html(charts["q4_cashflow_bars"])
     if "q4_fcf_yield_gauge" in charts: chart_html += _fig_to_html(charts["q4_fcf_yield_gauge"])
 
     capex_intensity = safe_divide(m.q4.capital_expenditure, m.q1.ttm_revenue)
@@ -1671,3 +2235,282 @@ def _pe_delta(now: Optional[float], at_buy: Optional[float]) -> str:
 
 def _evev_delta(now: Optional[float], at_buy: Optional[float]) -> str:
     return _pe_delta(now, at_buy)
+
+
+
+def _build_master_html(
+    new_metrics: AllMetrics,
+    new_panels: Dict[str, Panel],
+    new_recommendation: str,
+    new_recommendation_explanation: str,
+    new_charts: Dict[str, go.Figure],
+    existing_metrics: AllMetrics,
+    existing_panels: Dict[str, Panel],
+    existing_recommendation: str,
+    existing_recommendation_explanation: str,
+    existing_charts: Dict[str, go.Figure],
+    first_principles_report: Optional["FirstPrinciplesReport"] = None,
+    notes: str = "",
+    peer_metrics: Optional[Dict[str, AllMetrics]] = None,
+) -> str:
+    """Build the master HTML combining both ownership modes × all three timeline views."""
+    m = new_metrics  # ticker/company name are the same for both modes
+    gen_time = datetime.now().strftime("%B %d, %Y %H:%M")
+    plotly_cdn = '<script src="https://cdn.plot.ly/plotly-3.5.0.min.js"></script>'
+
+    # FP decisions for overview table
+    _, past_decision, _, _, _ = _compute_fp_questions_state(first_principles_report, "past", "Monitor")
+    _, future_decision, _, _, _ = _compute_fp_questions_state(first_principles_report, "future", "Monitor")
+
+    # FP explanation string for rec_box in FP panels
+    fp_explanation = ""
+    if first_principles_report is not None:
+        s = first_principles_report.synthesis
+        fp_explanation = (
+            f"First-principles signal mix: Strong {s.strong_count}, "
+            f"Watch {s.watch_count}, Weak {s.weak_count}, "
+            f"Insufficient {s.insufficient_count}."
+        )
+
+    # ── Master Header ─────────────────────────────────────────────────────────
+    master_header = f"""
+    <div style="background:linear-gradient(135deg,#1a252f,#2c3e50);
+                padding:32px 40px;color:white;border-radius:0 0 12px 12px;margin-bottom:0">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px">
+        <div>
+          <div style="font-size:13px;text-transform:uppercase;letter-spacing:2px;opacity:0.7;margin-bottom:4px">
+            Master CEO Report
+          </div>
+          <div style="font-size:42px;font-weight:900;letter-spacing:2px">{escape(m.ticker)}</div>
+          <div style="font-size:18px;opacity:0.85;margin-top:2px">{escape(m.company_name)}</div>
+          <div style="font-size:12px;opacity:0.6;margin-top:8px">{gen_time}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:11px;opacity:0.6">{escape(m.staleness_label)}</div>
+        </div>
+      </div>
+    </div>"""
+
+    # ── Decision badge helper (inline) ────────────────────────────────────────
+    def _rec_badge_mini(rec: str) -> str:
+        s = REC_STYLES.get(rec, REC_STYLES["Hold"])
+        return (
+            f'<span style="background:{s["bg"]};color:{s["text"]};'
+            f'border:1px solid {s["border"]};padding:3px 10px;border-radius:12px;'
+            f'font-size:12px;font-weight:700;white-space:nowrap">{escape(rec)}</span>'
+        )
+
+    # ── Decision Overview Table ───────────────────────────────────────────────
+    overview_section = f"""
+    <div style="max-width:1100px;margin:0 auto;padding:0 20px">
+      <div style="background:#ffffff;border-radius:8px;padding:20px 24px;margin:16px 0;
+                  box-shadow:0 1px 4px rgba(0,0,0,0.08);overflow-x:auto">
+        <h3 style="margin:0 0 14px 0;color:{COLOR_TEXT};font-size:15px;font-weight:700">
+          📋 Decision Overview
+        </h3>
+        <table style="width:100%;border-collapse:collapse;min-width:420px">
+          <thead>
+            <tr style="background:#f4f6f7">
+              <th style="padding:10px 14px;text-align:left;font-size:13px;color:{COLOR_NEUTRAL}">Mode</th>
+              <th style="padding:10px 14px;text-align:center;font-size:13px;color:{COLOR_NEUTRAL}">Present</th>
+              <th style="padding:10px 14px;text-align:center;font-size:13px;color:{COLOR_NEUTRAL}">Past</th>
+              <th style="padding:10px 14px;text-align:center;font-size:13px;color:{COLOR_NEUTRAL}">Future</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom:1px solid #ecf0f1">
+              <td style="padding:10px 14px;font-size:13px;font-weight:600;color:{COLOR_TEXT}">New Position</td>
+              <td style="padding:10px 14px;text-align:center">{_rec_badge_mini(new_recommendation)}</td>
+              <td style="padding:10px 14px;text-align:center">{_rec_badge_mini(past_decision)}</td>
+              <td style="padding:10px 14px;text-align:center">{_rec_badge_mini(future_decision)}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px 14px;font-size:13px;font-weight:600;color:{COLOR_TEXT}">Existing Holding</td>
+              <td style="padding:10px 14px;text-align:center">{_rec_badge_mini(existing_recommendation)}</td>
+              <td style="padding:10px 14px;text-align:center">{_rec_badge_mini(past_decision)}</td>
+              <td style="padding:10px 14px;text-align:center">{_rec_badge_mini(future_decision)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>"""
+
+    # ── Sticky Controls ───────────────────────────────────────────────────────
+    _btn = (
+        f"padding:6px 14px;border:1px solid #ddd;border-radius:6px;cursor:pointer;"
+        f"font-size:13px;font-weight:600;background:#f9fafb;color:{COLOR_TEXT};"
+        f"transition:background 0.15s,color 0.15s,border-color 0.15s"
+    )
+    controls = f"""
+    <div id="master-controls" style="background:#ffffff;border-bottom:2px solid #ecf0f1;
+                padding:12px 20px;position:sticky;top:0;z-index:100;
+                box-shadow:0 2px 8px rgba(0,0,0,0.06)">
+      <div style="max-width:1100px;margin:0 auto;display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:12px;font-weight:600;color:{COLOR_NEUTRAL};text-transform:uppercase;letter-spacing:0.8px">Ownership</span>
+          <div id="ownership-sel" style="display:flex;gap:4px">
+            <button class="sel-btn" data-group="ownership" data-val="existing" onclick="setOwnership('existing')" style="{_btn}">Existing Holding</button>
+            <button class="sel-btn" data-group="ownership" data-val="new" onclick="setOwnership('new')" style="{_btn}">New Position</button>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:12px;font-weight:600;color:{COLOR_NEUTRAL};text-transform:uppercase;letter-spacing:0.8px">Timeline</span>
+          <div id="timeline-sel" style="display:flex;gap:4px">
+            <button class="sel-btn" data-group="timeline" data-val="present" onclick="setTimeline('present')" style="{_btn}">Present</button>
+            <button class="sel-btn" data-group="timeline" data-val="past" onclick="setTimeline('past')" style="{_btn}">Past</button>
+            <button class="sel-btn" data-group="timeline" data-val="future" onclick="setTimeline('future')" style="{_btn}">Future</button>
+          </div>
+        </div>
+      </div>
+    </div>"""
+
+    # ── Build inner content for all 6 panels ─────────────────────────────────
+    fp_rec = first_principles_report.synthesis.decision if first_principles_report is not None else "Monitor"
+
+    new_present_inner = _present_inner_content(
+        new_metrics, new_panels, new_recommendation, new_recommendation_explanation,
+        new_charts, peer_metrics, notes, gen_time,
+    )
+    existing_present_inner = _present_inner_content(
+        existing_metrics, existing_panels, existing_recommendation, existing_recommendation_explanation,
+        existing_charts, peer_metrics, notes, gen_time,
+    )
+    new_past_inner = _fp_inner_content(
+        new_metrics, fp_rec, fp_explanation, notes, first_principles_report, "past", gen_time,
+    )
+    new_future_inner = _fp_inner_content(
+        new_metrics, fp_rec, fp_explanation, notes, first_principles_report, "future", gen_time,
+    )
+    existing_past_inner = _fp_inner_content(
+        existing_metrics, fp_rec, fp_explanation, notes, first_principles_report, "past", gen_time,
+    )
+    existing_future_inner = _fp_inner_content(
+        existing_metrics, fp_rec, fp_explanation, notes, first_principles_report, "future", gen_time,
+    )
+
+    def _present_panel(panel_id: str, metrics_obj: AllMetrics, inner: str) -> str:
+        dq = _data_quality_banner(metrics_obj)
+        return (
+            f'<div id="{panel_id}" class="master-panel" style="display:none">'
+            f'{dq}'
+            f'<div style="max-width:1100px;margin:0 auto;padding:0 20px">'
+            f'{inner}'
+            f'</div>'
+            f'</div>'
+        )
+
+    def _fp_panel(panel_id: str, inner: str) -> str:
+        return (
+            f'<div id="{panel_id}" class="master-panel" style="display:none">'
+            f'<div style="max-width:1100px;margin:0 auto;padding:0 20px">'
+            f'{inner}'
+            f'</div>'
+            f'</div>'
+        )
+
+    panels_html = "\n".join([
+        _present_panel("panel-new-present", new_metrics, new_present_inner),
+        _fp_panel("panel-new-past", new_past_inner),
+        _fp_panel("panel-new-future", new_future_inner),
+        _present_panel("panel-existing-present", existing_metrics, existing_present_inner),
+        _fp_panel("panel-existing-past", existing_past_inner),
+        _fp_panel("panel-existing-future", existing_future_inner),
+    ])
+
+    # ── Inline JavaScript ─────────────────────────────────────────────────────
+    js = """
+    <script>
+    var _masterOwnership = 'existing';
+    var _masterTimeline = 'present';
+
+    function showMasterPanel(ownership, timeline) {
+        document.querySelectorAll('.master-panel').forEach(function(el) {
+            el.style.display = 'none';
+        });
+        var panel = document.getElementById('panel-' + ownership + '-' + timeline);
+        if (panel) panel.style.display = 'block';
+
+        document.querySelectorAll('#ownership-sel .sel-btn').forEach(function(btn) {
+            var active = btn.getAttribute('data-val') === ownership;
+            btn.style.background = active ? '#2980b9' : '#f9fafb';
+            btn.style.color = active ? 'white' : '#2c3e50';
+            btn.style.borderColor = active ? '#2980b9' : '#ddd';
+        });
+        document.querySelectorAll('#timeline-sel .sel-btn').forEach(function(btn) {
+            var active = btn.getAttribute('data-val') === timeline;
+            btn.style.background = active ? '#2980b9' : '#f9fafb';
+            btn.style.color = active ? 'white' : '#2c3e50';
+            btn.style.borderColor = active ? '#2980b9' : '#ddd';
+        });
+        _masterOwnership = ownership;
+        _masterTimeline = timeline;
+    }
+
+    function setOwnership(ownership) { showMasterPanel(ownership, _masterTimeline); }
+    function setTimeline(timeline) { showMasterPanel(_masterOwnership, timeline); }
+
+    showMasterPanel('existing', 'present');
+    </script>"""
+
+    body = "\n".join([
+        master_header,
+        overview_section,
+        controls,
+        panels_html,
+        js,
+    ])
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Master CEO Report — {escape(m.ticker)} — {datetime.now().strftime('%Y-%m-%d')}</title>
+  {plotly_cdn}
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      background: {COLOR_BG};
+      color: {COLOR_TEXT};
+      margin: 0;
+      padding: 0;
+      line-height: 1.5;
+    }}
+    table {{ border-collapse: collapse; }}
+    @media (max-width: 700px) {{
+      div[style*="grid-template-columns:1fr 1fr"] {{
+        display: block !important;
+      }}
+      #master-controls > div > div {{
+        flex-wrap: wrap;
+      }}
+    }}
+    .question-section {{
+      background: {COLOR_CARD};
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 16px 0;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+    }}
+    .question-header {{
+      font-size: 16px;
+      font-weight: 700;
+      color: {COLOR_TEXT};
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #ecf0f1;
+    }}
+    .question-label {{
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: {COLOR_NEUTRAL};
+      margin-bottom: 4px;
+    }}
+  </style>
+</head>
+<body>
+{body}
+</body>
+</html>"""

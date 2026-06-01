@@ -1148,17 +1148,25 @@ def build_interpretation_table_html(
           <td style="padding:7px 10px;color:#566573;font-size:12px;max-width:180px">
             {interp['plain_english']}
           </td>
-          <td style="padding:7px 10px;color:#7f8c8d;font-size:11px;font-style:italic;white-space:nowrap;max-width:140px">
+          <td style="padding:7px 10px;color:#7f8c8d;font-size:11px;font-style:italic;word-wrap:break-word;overflow-wrap:break-word;min-width:120px;max-width:180px">
             {interp['benchmark_label']}
           </td>
-          <td style="padding:7px 10px;color:#566573;font-size:12px;max-width:200px">
+          <td style="padding:7px 10px;color:#566573;font-size:12px;word-wrap:break-word;overflow-wrap:break-word;min-width:160px;max-width:240px">
             {interp['comment']}
           </td>
         </tr>"""
 
     return f"""
     <div style="overflow-x:auto;margin-top:14px">
-      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:700px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:700px;table-layout:fixed">
+        <colgroup>
+          <col style="width:18%">
+          <col style="width:9%">
+          <col style="width:10%">
+          <col style="width:25%">
+          <col style="width:18%">
+          <col style="width:20%">
+        </colgroup>
         <thead>
           <tr style="background:#ecf0f1;border-bottom:2px solid #d5d8dc">
             <th style="padding:8px 10px;text-align:left;color:#2c3e50;font-size:12px">Metric</th>
@@ -1175,20 +1183,20 @@ def build_interpretation_table_html(
 
 
 def color_legend_html() -> str:
-    """Compact legend bar explaining the rating color system."""
+    """Compact legend bar explaining the 5-tier scoring color system."""
     items = [
-        ("Excellent", "Dark green — outstanding, in the top tier"),
-        ("Good",      "Light green — healthy and above average"),
-        ("Neutral",   "Amber — acceptable, but worth watching"),
-        ("Weak",      "Orange — below average, a caution flag"),
-        ("Bad",       "Red — concerning, requires investigation"),
-        ("N/A",       "Gray — insufficient data to rate"),
+        ("Excellent", "8.0–10.0 — outstanding"),
+        ("Good",      "6.5–7.9 — healthy"),
+        ("Neutral",   "5.0–6.4 — acceptable, watch"),
+        ("Weak",      "3.5–4.9 — below average, caution"),
+        ("Bad",       "0.0–3.4 — concerning, investigate"),
+        ("N/A",       "missing / insufficient data"),
     ]
     badges = " &nbsp; ".join(build_badge_html(r) + f'&thinsp;<span style="font-size:11px;color:#566573">{desc}</span>' for r, desc in items)
     return f"""
     <div style="background:#fafafa;border:1px solid #ecf0f1;border-radius:8px;
                 padding:10px 16px;margin:12px 0;display:flex;flex-wrap:wrap;
                 gap:8px;align-items:center">
-      <span style="font-size:12px;font-weight:700;color:#2c3e50;margin-right:8px">Rating Guide:</span>
+      <span style="font-size:12px;font-weight:700;color:#2c3e50;margin-right:8px">Scoring:</span>
       {badges}
     </div>"""

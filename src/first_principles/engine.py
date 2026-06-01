@@ -12,6 +12,13 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import yfinance as yf
 
+# Load .env so FRED_API_KEY (and any other secrets) are available via os.getenv
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env", override=False)
+except ImportError:
+    pass
+
 from ..utils import outputs_dir
 from .config import (
     DEFAULT_ACCEPTANCE_BUFFER_DAYS,

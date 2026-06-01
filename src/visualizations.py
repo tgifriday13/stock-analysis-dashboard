@@ -23,16 +23,45 @@ from .utils import fmt_currency, fmt_pct, fmt_multiple, fmt_number
 logger = logging.getLogger("dashboard.visualizations")
 
 # ── Brand palette ─────────────────────────────────────────────────────────────
-COLOR_STRONG  = "#27ae60"   # green
+COLOR_STRONG  = "#27ae60"   # green  (kept for backward compat — use score_to_color for scoring)
 COLOR_OK      = "#f39c12"   # amber
 COLOR_WEAK    = "#e74c3c"   # red
 COLOR_NEUTRAL = "#7f8c8d"   # grey
 COLOR_BG      = "#ffffff"
-COLOR_GRID    = "#ecf0f1"
+COLOR_GRID    = "#f0f0f0"
 COLOR_TEXT    = "#2c3e50"
 COLOR_ACCENT  = "#2980b9"   # blue
 
+# ── Unified 5-tier scoring colors (0–10 scale) ────────────────────────────────
+# 8.0–10.0 = Excellent  (dark green)
+# 6.5–7.9  = Good       (light green)
+# 5.0–6.4  = Neutral    (amber)
+# 3.5–4.9  = Weak       (orange)
+# 0.0–3.4  = Bad        (red)
+# None     = Missing    (gray)
+SCORE_EXCELLENT = "#27ae60"
+SCORE_GOOD      = "#52be80"
+SCORE_NEUTRAL   = "#f39c12"
+SCORE_WEAK      = "#e67e22"
+SCORE_BAD       = "#e74c3c"
+SCORE_MISSING   = "#95a5a6"
+
 FONT_FAMILY   = "Inter, Arial, sans-serif"
+
+
+def score_to_color(score: Optional[float]) -> str:
+    """Map a 0–10 score to the unified 5-tier color."""
+    if score is None:
+        return SCORE_MISSING
+    if score >= 8.0:
+        return SCORE_EXCELLENT
+    if score >= 6.5:
+        return SCORE_GOOD
+    if score >= 5.0:
+        return SCORE_NEUTRAL
+    if score >= 3.5:
+        return SCORE_WEAK
+    return SCORE_BAD
 
 
 def _watermark(label: str) -> dict:
@@ -52,10 +81,11 @@ def _base_layout(title: str, watermark_text: str = "", height: int = 320) -> dic
     return dict(
         title=dict(text=title, font=dict(size=14, color=COLOR_TEXT, family=FONT_FAMILY)),
         height=height,
-        margin=dict(l=40, r=20, t=50, b=60),
+        margin=dict(l=60, r=30, t=50, b=60),
         paper_bgcolor=COLOR_BG,
         plot_bgcolor=COLOR_BG,
-        font=dict(family=FONT_FAMILY, color=COLOR_TEXT),
+        font=dict(family=FONT_FAMILY, size=12, color=COLOR_TEXT),
+        template="plotly_white",
         annotations=annots,
     )
 
@@ -91,6 +121,8 @@ def gauge_chart(
     higher_is_better: bool = True,
     watermark: str = "",
     title: str = "",
+    number_format: str = ".2f",
+    axis_tickformat: str = "",
 ) -> go.Figure:
     """
     Gauge indicator chart. Used for single KPI metrics like P/E, FCF yield, margins.
@@ -117,13 +149,17 @@ def gauge_chart(
 
     bar_color = _metric_color(value, strong_threshold, acceptable_threshold, higher_is_better)
 
+    gauge_axis = {"range": [min_val, max_val], "tickfont": {"size": 10}}
+    if axis_tickformat:
+        gauge_axis["tickformat"] = axis_tickformat
+
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=display_val,
-        number={"valueformat": ".2f", "font": {"size": 20, "color": bar_color}},
+        number={"valueformat": number_format, "font": {"size": 20, "color": bar_color}},
         title={"text": label, "font": {"size": 13, "color": COLOR_TEXT}},
         gauge={
-            "axis": {"range": [min_val, max_val], "tickfont": {"size": 10}},
+            "axis": gauge_axis,
             "bar": {"color": bar_color, "thickness": 0.3},
             "steps": steps,
             "threshold": {
@@ -151,6 +187,8 @@ def bar_chart(
     compare_values: Optional[List[Optional[float]]] = None,
     compare_label: str = "At Purchase",
     current_label: str = "Current",
+    xaxis_title: str = "",
+    yaxis_tickformat: str = "",
 ) -> go.Figure:
     """
     Horizontal or vertical bar chart. Optionally shows side-by-side 'now vs. at purchase'.
@@ -169,6 +207,7 @@ def bar_chart(
         marker_color=bar_colors,
         text=[format_fn(v) for v in values],
         textposition="outside",
+        hovertemplate="%{x}<br><b>%{text}</b><extra></extra>",
     ))
 
     if compare_values:
@@ -181,15 +220,19 @@ def bar_chart(
             opacity=0.6,
             text=[format_fn(v) for v in compare_values],
             textposition="outside",
+            hovertemplate="%{x}<br><b>%{text}</b><extra></extra>",
         ))
         fig.update_layout(barmode="group")
 
     fig.update_layout(
         **_base_layout(title, watermark, height=height),
+        xaxis_title=xaxis_title,
         yaxis_title=y_label,
         showlegend=bool(compare_values),
     )
-    fig.update_yaxes(gridcolor=COLOR_GRID)
+    fig.update_yaxes(gridcolor=COLOR_GRID, showgrid=True)
+    if yaxis_tickformat:
+        fig.update_yaxes(tickformat=yaxis_tickformat)
     return fig
 
 
@@ -206,6 +249,8 @@ def line_chart(
     vline_x=None,
     vline_label: str = "Purchase Date",
     color_map: Optional[Dict[str, str]] = None,
+    xaxis_title: str = "",
+    yaxis_tickformat: str = "",
 ) -> go.Figure:
     """
     Multi-series line chart. Used for price history, revenue trends, margin trends.
@@ -215,12 +260,19 @@ def line_chart(
     default_colors = [COLOR_ACCENT, COLOR_STRONG, COLOR_OK, COLOR_WEAK, COLOR_NEUTRAL]
     for idx, (name, vals) in enumerate(y_series.items()):
         color = (color_map or {}).get(name, default_colors[idx % len(default_colors)])
+        # Build a y hover format: use yaxis_tickformat if percent-like, else comma float
+        if yaxis_tickformat in (".0%", ".1%", ".2%"):
+            y_hover = f"%{{y{yaxis_tickformat.replace('.', ':.')}}}"
+        else:
+            y_hover = "%{y:,.2f}"
         fig.add_trace(go.Scatter(
             x=x,
             y=vals,
-            mode="lines",
+            mode="lines+markers",
             name=name,
             line=dict(color=color, width=2),
+            marker=dict(size=5),
+            hovertemplate=f"<b>{name}</b><br>%{{x}}<br>{y_hover}<extra></extra>",
         ))
 
     if vline_x is not None:
@@ -235,12 +287,15 @@ def line_chart(
 
     fig.update_layout(
         **_base_layout(title, watermark, height=height),
+        xaxis_title=xaxis_title,
         yaxis_title=y_label,
         showlegend=True,
         hovermode="x unified",
     )
-    fig.update_yaxes(gridcolor=COLOR_GRID)
-    fig.update_xaxes(gridcolor=COLOR_GRID)
+    fig.update_yaxes(gridcolor=COLOR_GRID, showgrid=True)
+    fig.update_xaxes(gridcolor=COLOR_GRID, showgrid=True)
+    if yaxis_tickformat:
+        fig.update_yaxes(tickformat=yaxis_tickformat)
     return fig
 
 
@@ -311,8 +366,13 @@ def radar_chart(
     ))
     fig.update_layout(
         polar=dict(
-            radialaxis=dict(visible=True, range=[0, 10], gridcolor=COLOR_GRID),
-            angularaxis=dict(gridcolor=COLOR_GRID),
+            radialaxis=dict(
+                visible=True, range=[0, 10],
+                gridcolor=COLOR_GRID, showgrid=True,
+                tickfont=dict(size=10),
+                dtick=2,
+            ),
+            angularaxis=dict(gridcolor=COLOR_GRID, tickfont=dict(size=11)),
         ),
         **_base_layout(title, watermark, height=360),
         showlegend=False,
@@ -327,6 +387,7 @@ def waterfall_chart(
     values: List[float],
     title: str,
     watermark: str = "",
+    yaxis_title: str = "USD",
 ) -> go.Figure:
     """
     Waterfall / bridge chart. Used for showing FCF build-up or return attribution.
@@ -342,7 +403,11 @@ def waterfall_chart(
         decreasing={"marker": {"color": COLOR_WEAK}},
         totals={"marker": {"color": COLOR_ACCENT}},
     ))
-    fig.update_layout(**_base_layout(title, watermark))
+    fig.update_layout(**_base_layout(title, watermark), yaxis_title=yaxis_title)
+    fig.update_yaxes(
+        gridcolor=COLOR_GRID, showgrid=True,
+        tickprefix="$", tickformat=",.2s",
+    )
     return fig
 
 
@@ -380,8 +445,10 @@ def dividend_history_chart(
     fig = go.Figure(go.Bar(
         x=annual.index, y=vals,
         marker_color=colors,
+        name="Annual Dividend",
         text=[f"${v:.2f}" for v in vals],
         textposition="outside",
+        hovertemplate="<b>%{x|%Y}</b><br>Dividend: $%{y:.2f}/share<extra></extra>",
     ))
     if purchase_date:
         purchase_ts = pd.Timestamp(purchase_date).normalize()
@@ -404,8 +471,11 @@ def dividend_history_chart(
             yshift=4,
         )
     fig.update_layout(**_base_layout(title, watermark))
-    fig.update_yaxes(title_text="$ / Share", gridcolor=COLOR_GRID)
-    fig.update_xaxes(tickformat="%Y")
+    fig.update_yaxes(
+        title_text="Dividend ($ / Share)", tickprefix="$",
+        gridcolor=COLOR_GRID, showgrid=True,
+    )
+    fig.update_xaxes(title_text="Year", tickformat="%Y", gridcolor=COLOR_GRID)
     return fig
 
 
@@ -427,7 +497,12 @@ def price_history_chart(
         return fig
 
     hist = history.copy()
-    hist.index = pd.to_datetime(hist.index).tz_localize(None)
+    hist.index = pd.to_datetime(hist.index)
+    # Strip timezone if present (tz_convert → None removes tz; tz_localize only for naive)
+    if hist.index.tz is not None:
+        hist.index = hist.index.tz_convert(None)
+    else:
+        hist.index = hist.index.tz_localize(None)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -472,14 +547,11 @@ def score_bar_chart(
     watermark: str = "",
 ) -> go.Figure:
     """
-    Horizontal bar chart of the 6 question scores, color-coded green/amber/red.
+    Horizontal bar chart of the 6 question scores, 5-tier color-coded.
     """
     labels = list(scores.keys())
     values = list(scores.values())
-    colors = [
-        COLOR_STRONG if v >= 7 else COLOR_OK if v >= 4 else COLOR_WEAK
-        for v in values
-    ]
+    colors = [score_to_color(v) for v in values]
 
     fig = go.Figure(go.Bar(
         x=values,
@@ -493,8 +565,9 @@ def score_bar_chart(
         **_base_layout(title, watermark, height=280),
         xaxis=dict(range=[0, 10], gridcolor=COLOR_GRID),
     )
-    # Add reference line at 5
-    fig.add_vline(x=5, line_dash="dot", line_color=COLOR_NEUTRAL, opacity=0.6)
+    # Tier reference lines
+    for cutoff, label in [(3.5, "Bad/Weak"), (5.0, "Weak/Neutral"), (6.5, "Neutral/Good"), (8.0, "Good/Excellent")]:
+        fig.add_vline(x=cutoff, line_dash="dot", line_color="#d5d8dc", opacity=0.8)
     return fig
 
 
@@ -525,13 +598,121 @@ def peer_comparison_chart(
             marker_color=colors[idx % len(colors)],
             text=[format_fn(v) for v in vals],
             textposition="outside",
+            hovertemplate=f"<b>%{{x}}</b><br>{metric}: %{{text}}<extra></extra>",
         ))
 
     fig.update_layout(
         **_base_layout(title or f"Peer Comparison — {metric_label}", watermark),
         barmode="group",
         yaxis_title=metric_label,
+        showlegend=True,
     )
+    fig.update_yaxes(gridcolor=COLOR_GRID, showgrid=True)
+    return fig
+
+
+# ── Cash flow waterfall + balance sheet helpers ───────────────────────────────
+
+def _cashflow_waterfall(
+    ocf: float,
+    capex: float,
+    fcf: float,
+    title: str = "Cash Flow Waterfall",
+    watermark: str = "",
+) -> go.Figure:
+    """
+    Waterfall: Operating CF → subtract CapEx → Free CF.
+    CapEx is entered as stored (often negative); we always show it as a deduction.
+    """
+    capex_deduction = -abs(capex)  # always negative for display purposes
+    labels = ["Operating CF", "CapEx", "Free Cash Flow"]
+    measures = ["absolute", "relative", "total"]
+    values = [ocf, capex_deduction, fcf]
+
+    hover = [fmt_currency(v) for v in [ocf, capex_deduction, fcf]]
+
+    fig = go.Figure(go.Waterfall(
+        name="",
+        orientation="v",
+        measure=measures,
+        x=labels,
+        y=values,
+        text=hover,
+        textposition="outside",
+        connector={"line": {"color": "#bdc3c7", "width": 1.5, "dash": "dot"}},
+        increasing={"marker": {"color": COLOR_STRONG}},
+        decreasing={"marker": {"color": COLOR_WEAK}},
+        totals={"marker": {"color": COLOR_ACCENT}},
+    ))
+    fig.update_layout(
+        **_base_layout(title, watermark, height=320),
+        yaxis_title="USD",
+        showlegend=False,
+    )
+    fig.update_yaxes(gridcolor=COLOR_GRID)
+    return fig
+
+
+def _balance_sheet_chart(
+    total_debt: Optional[float],
+    cash: Optional[float],
+    net_debt: Optional[float],
+    title: str = "Balance Sheet: Debt vs Cash",
+    watermark: str = "",
+) -> go.Figure:
+    """
+    Side-by-side horizontal bar: Total Debt (red) vs Cash (green).
+    A net-debt annotation makes the position obvious at a glance.
+    """
+    debt_val = total_debt or 0.0
+    cash_val = cash or 0.0
+    net_val = net_debt if net_debt is not None else (debt_val - cash_val)
+
+    net_color = COLOR_STRONG if net_val <= 0 else (COLOR_OK if net_val < debt_val * 0.5 else COLOR_WEAK)
+    net_label = f"Net Cash ${abs(net_val)/1e9:.1f}B" if net_val < 0 else f"Net Debt ${net_val/1e9:.1f}B"
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="Total Debt",
+        x=[debt_val],
+        y=["Balance Sheet"],
+        orientation="h",
+        marker_color=COLOR_WEAK,
+        text=[fmt_currency(debt_val)],
+        textposition="auto",
+        width=0.5,
+    ))
+    fig.add_trace(go.Bar(
+        name="Cash & Equivalents",
+        x=[cash_val],
+        y=["Balance Sheet"],
+        orientation="h",
+        marker_color=COLOR_STRONG,
+        text=[fmt_currency(cash_val)],
+        textposition="auto",
+        width=0.5,
+    ))
+
+    base = _base_layout(title, watermark, height=220)
+    net_annotation = dict(
+        text=net_label,
+        xref="paper", yref="paper",
+        x=0.98, y=0.96,
+        showarrow=False,
+        font=dict(size=13, color=net_color, family=FONT_FAMILY),
+        xanchor="right",
+        bgcolor="rgba(255,255,255,0.85)",
+        bordercolor=net_color,
+        borderwidth=1,
+        borderpad=4,
+    )
+    base["annotations"] = base.get("annotations", []) + [net_annotation]
+    fig.update_layout(
+        **base,
+        barmode="group",
+        xaxis_title="USD",
+    )
+    fig.update_xaxes(gridcolor=COLOR_GRID)
     return fig
 
 
@@ -559,11 +740,16 @@ def build_all_charts(
     rev_compare = [q1.ttm_revenue_prior] if mode == "existing" else None
     charts["q1_revenue"] = bar_chart(
         rev_labels, rev_vals,
-        title="Q1 — Revenue Scale",
+        title=f"Q1 — {metrics.ticker} Revenue (TTM)",
+        y_label="Revenue (USD)",
+        yaxis_tickformat="$,.2s",
         format_fn=fmt_currency,
-        colors=[COLOR_ACCENT],
+        colors=["#2196f3"],
         compare_values=rev_compare,
+        current_label="TTM",
+        compare_label="Prior Period",
         watermark=wm,
+        xaxis_title="Period",
     )
 
     # ── Q2 ─────────────────────────────────────────────────────────────────────
@@ -577,11 +763,13 @@ def build_all_charts(
     ]
     charts["q2_revenue_cagr"] = bar_chart(
         cagr_labels, cagr_vals,
-        title="Q2 — Revenue CAGR by Time Period",
-        y_label="CAGR",
+        title=f"Q2 — {metrics.ticker} Revenue CAGR",
+        y_label="Compound Annual Growth Rate (%)",
+        yaxis_tickformat=".0%",
         format_fn=fmt_pct,
         colors=cagr_colors,
         watermark=wm,
+        xaxis_title="Period",
     )
 
     # ── Q3 ─────────────────────────────────────────────────────────────────────
@@ -591,12 +779,16 @@ def build_all_charts(
     margin_prior = [q3.gross_margin_prior, q3.operating_margin_prior, q3.net_margin_prior, None]
     charts["q3_margins"] = bar_chart(
         margin_labels, margin_vals,
-        title="Q3 — Profit Margins",
-        y_label="Margin",
+        title=f"Q3 — {metrics.ticker} Profit Margins (TTM)",
+        y_label="Margin (%)",
+        yaxis_tickformat=".0%",
         format_fn=fmt_pct,
         compare_values=margin_prior if mode == "existing" else None,
         colors=[COLOR_STRONG if v and v > 0 else COLOR_WEAK for v in margin_vals],
         watermark=wm,
+        xaxis_title="Margin Type",
+        current_label="Current",
+        compare_label="Prior Year",
     )
     charts["q3_roic_gauge"] = gauge_chart(
         value=q3.roic,
@@ -605,8 +797,10 @@ def build_all_charts(
         strong_threshold=tm.get("profitability.roic_strong"),
         acceptable_threshold=tm.get("profitability.roic_acceptable"),
         format_fn=fmt_pct,
+        number_format=".1%",
+        axis_tickformat=".0%",
         watermark=wm,
-        title="Q3 — Return on Invested Capital",
+        title=f"Q3 — {metrics.ticker} Return on Invested Capital",
     )
 
     # ── Q4 ─────────────────────────────────────────────────────────────────────
@@ -618,17 +812,19 @@ def build_all_charts(
         strong_threshold=tm.get("cashflow.fcf_yield_strong"),
         acceptable_threshold=tm.get("cashflow.fcf_yield_acceptable"),
         format_fn=fmt_pct,
+        number_format=".1%",
+        axis_tickformat=".0%",
         watermark=wm,
-        title="Q4 — Free Cash Flow Yield",
+        title=f"Q4 — {metrics.ticker} Free Cash Flow Yield",
     )
-    cf_labels = ["Operating CF", "CapEx", "Free CF"]
-    cf_vals = [q4.operating_cash_flow, q4.capital_expenditure, q4.free_cash_flow]
-    charts["q4_cashflow_bars"] = bar_chart(
-        cf_labels, cf_vals,
-        title="Q4 — Cash Flow Breakdown",
-        format_fn=fmt_currency,
-        colors=[COLOR_STRONG, COLOR_WEAK, COLOR_ACCENT],
-        watermark=wm,
+    # Cash flow: waterfall showing Operating CF → (minus CapEx) → Free CF
+    ocf = q4.operating_cash_flow or 0.0
+    capex = q4.capital_expenditure or 0.0
+    fcf = q4.free_cash_flow if q4.free_cash_flow is not None else (ocf - abs(capex))
+    # Waterfall: start with OCF, subtract CapEx (as negative), land on FCF
+    charts["q4_cashflow_waterfall"] = _cashflow_waterfall(
+        ocf=ocf, capex=capex, fcf=fcf,
+        title=f"Q4 — {metrics.ticker} Cash Flow (TTM)", watermark=wm
     )
     # Dividends
     if q4.is_dividend_payer:
@@ -650,15 +846,14 @@ def build_all_charts(
         format_fn=lambda v: fmt_multiple(v),
         higher_is_better=False,
         watermark=wm,
-        title="Q5 — Leverage (Debt/EBITDA)",
+        title=f"Q5 — {metrics.ticker} Leverage (Debt/EBITDA)",
     )
-    bs_labels = ["Total Debt", "Cash", "Net Debt"]
-    bs_vals = [q5.total_debt, q5.cash_and_equivalents, q5.net_debt]
-    charts["q5_balance_sheet_bars"] = bar_chart(
-        bs_labels, bs_vals,
-        title="Q5 — Balance Sheet Snapshot",
-        format_fn=fmt_currency,
-        colors=[COLOR_WEAK, COLOR_STRONG, COLOR_ACCENT],
+    # Balance sheet: horizontal net-position chart (debt left / cash right)
+    charts["q5_balance_sheet_bars"] = _balance_sheet_chart(
+        total_debt=q5.total_debt,
+        cash=q5.cash_and_equivalents,
+        net_debt=q5.net_debt,
+        title=f"Q5 — {metrics.ticker} Balance Sheet: Debt vs Cash",
         watermark=wm,
     )
 
@@ -673,7 +868,7 @@ def build_all_charts(
         format_fn=fmt_multiple,
         higher_is_better=False,
         watermark=wm,
-        title="Q6 — Valuation (Trailing P/E)",
+        title=f"Q6 — {metrics.ticker} Trailing P/E",
     )
     charts["q6_ev_ebitda_gauge"] = gauge_chart(
         value=q6.ev_ebitda,
@@ -684,16 +879,28 @@ def build_all_charts(
         format_fn=fmt_multiple,
         higher_is_better=False,
         watermark=wm,
-        title="Q6 — Valuation (EV/EBITDA)",
+        title=f"Q6 — {metrics.ticker} EV/EBITDA",
     )
     val_labels = ["P/E", "Fwd P/E", "EV/EBITDA", "P/S", "P/B", "PEG"]
     val_vals = [q6.pe_ratio, q6.forward_pe, q6.ev_ebitda, q6.price_to_sales, q6.price_to_book, q6.peg_ratio]
+    # Color P/E and EV/EBITDA against known thresholds; clean blue for others
+    val_colors = [
+        _metric_color(q6.pe_ratio,   tm.get("valuation.pe_cheap"), tm.get("valuation.pe_fair"), higher_is_better=False),
+        _metric_color(q6.forward_pe, tm.get("valuation.pe_cheap"), tm.get("valuation.pe_fair"), higher_is_better=False),
+        _metric_color(q6.ev_ebitda,  tm.get("valuation.ev_ebitda_cheap"), tm.get("valuation.ev_ebitda_fair"), higher_is_better=False),
+        "#2196f3",  # P/S — no universal threshold
+        "#2196f3",  # P/B — no universal threshold
+        "#2196f3",  # PEG — no universal threshold
+    ]
     charts["q6_valuation_bars"] = bar_chart(
         val_labels, val_vals,
-        title="Q6 — Valuation Multiples",
+        title=f"Q6 — {metrics.ticker} Valuation Multiples",
+        y_label="Valuation Multiple (×)",
+        yaxis_tickformat=".1f",
         format_fn=fmt_multiple,
-        colors=[COLOR_NEUTRAL] * len(val_labels),
+        colors=val_colors,
         watermark=wm,
+        xaxis_title="Metric",
     )
 
     # ── Scorecard ──────────────────────────────────────────────────────────────
@@ -704,6 +911,7 @@ def build_all_charts(
     )
     charts["scorecard_bars"] = score_bar_chart(
         metrics.scores,
+        title=f"{metrics.ticker} — Question Scores (0–10)",
         watermark=wm,
     )
 
