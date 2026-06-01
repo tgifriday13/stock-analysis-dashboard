@@ -193,6 +193,9 @@ class AllMetrics:
     # Summary scores (0–10 per question, average → overall)
     scores: Dict[str, float] = field(default_factory=dict)
     overall_score: float = 0.0
+    # Confidence in the decision given data completeness (0–100)
+    decision_confidence: float = 100.0
+    decision_confidence_flags: List[str] = field(default_factory=list)
 
 
 # ── Main calculator ───────────────────────────────────────────────────────────
@@ -247,7 +250,73 @@ class MetricsCalculator:
             metrics.portfolio = self._portfolio_context(metrics)
         metrics.scores = self._compute_scores(metrics)
         metrics.overall_score = sum(metrics.scores.values()) / max(len(metrics.scores), 1)
+        confidence, flags = self._compute_decision_confidence(metrics)
+        metrics.decision_confidence = confidence
+        metrics.decision_confidence_flags = flags
         return metrics
+
+    # ── Decision confidence ───────────────────────────────────────────────────
+
+    def _compute_decision_confidence(
+        self, metrics: "AllMetrics"
+    ) -> Tuple[float, List[str]]:
+        """
+        Return (confidence_pct, flags).
+        Starts at 100 and deducts for each data-quality issue found.
+        """
+        score = 100.0
+        flags: List[str] = []
+
+        # Price history missing
+        if self.hist is None or (hasattr(self.hist, "empty") and self.hist.empty):
+            score -= 15
+            flags.append("Price history unavailable — charts may be incomplete")
+
+        # Stale filing data
+        days_old = self.stock.days_since_last_filing()
+        if days_old is not None and days_old > 120:
+            deduction = min(25, 10 + (days_old - 120) // 30 * 3)
+            score -= deduction
+            flags.append(
+                f"Filing data is {days_old} days old — verify figures before acting"
+            )
+        elif days_old is None:
+            score -= 10
+            flags.append("Filing date unknown — data freshness cannot be confirmed")
+
+        # Valuation data incomplete
+        q6 = metrics.q6
+        val_missing = sum(
+            1 for v in [q6.pe_ratio, q6.forward_pe, q6.ev_ebitda, q6.price_to_book]
+            if v is None
+        )
+        if val_missing >= 3:
+            score -= 12
+            flags.append("Most valuation multiples are unavailable")
+        elif val_missing >= 2:
+            score -= 6
+            flags.append("Several valuation multiples are missing")
+
+        # Historical revenue trend unavailable (need at least 2 years)
+        q2 = metrics.q2
+        if q2.revenue_3yr_cagr is None and q2.revenue_5yr_cagr is None:
+            score -= 8
+            flags.append("Multi-year revenue trend data unavailable")
+
+        # Existing mode — missing portfolio context
+        if self.mode == "existing":
+            if self.cost_basis is None:
+                score -= 10
+                flags.append("Cost basis not provided — gain/loss analysis unavailable")
+            if self.purchase_date is None:
+                score -= 5
+                flags.append("Purchase date not provided — holding period unknown")
+            if self.total_portfolio_value is None:
+                score -= 5
+                flags.append("Total portfolio value not provided — position sizing unavailable")
+
+        confidence = max(0.0, min(100.0, score))
+        return confidence, flags
 
     # ── Q1: Scale ─────────────────────────────────────────────────────────────
 
