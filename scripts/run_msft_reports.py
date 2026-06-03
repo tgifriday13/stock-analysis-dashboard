@@ -5,12 +5,12 @@ Used for visual-improvements branch development work.
 import sys, os
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Load .env so FRED_API_KEY and other secrets are available
 try:
     from dotenv import load_dotenv
-    load_dotenv(Path(__file__).parent / ".env")
+    load_dotenv(Path(__file__).parent.parent / ".env")
 except ImportError:
     pass
 

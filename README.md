@@ -5,8 +5,9 @@ A Python notebook that answers **6 hyper-specific fundamental questions** about 
 ## Quickstart
 
 ```bash
-# 1. Clone / download the project
-cd buy_hold_sell_dashboard
+# 1. Clone the project
+git clone https://github.com/tgifriday13/stock-analysis-dashboard.git
+cd stock-analysis-dashboard
 
 # 2. Create and activate a virtual environment (recommended)
 python3 -m venv venv
@@ -14,12 +15,17 @@ source venv/bin/activate        # macOS/Linux
 # venv\Scripts\activate         # Windows
 
 # 3. Install dependencies
-pip install -r requirements.txt
+pip install -r requirements.txt          # production only
+pip install -r requirements-dev.txt     # add notebook + dev tools
 
-# 4. Open the notebook
-jupyter notebook notebooks/main.ipynb
+# 4. Copy and fill in your environment variables
+cp .env.example .env
+# (edit .env with your SEC_USER_AGENT and FRED_API_KEY)
+
+# 5. Open the notebook
+jupyter notebook notebooks/stock_analysis.ipynb
 # OR with JupyterLab:
-jupyter lab notebooks/main.ipynb
+jupyter lab notebooks/stock_analysis.ipynb
 ```
 
 Then **edit Cell 1** (Configuration) and **Run All Cells**. A CEO Report opens in your browser automatically.
@@ -119,6 +125,15 @@ paths = engine.save_report(report)
 print(paths)
 ```
 
+Or from the command line:
+```bash
+python scripts/run_all_reports.py   # all 6 report variants for configured ticker
+python scripts/run_msft_reports.py  # MSFT present/past/future reports
+# OR using make:
+make run
+make run-msft
+```
+
 Optional environment variables:
 - `SEC_USER_AGENT` (recommended by SEC for API etiquette)
 - `FRED_API_KEY` (for stable FRED API access)
@@ -131,9 +146,7 @@ Every analysis is appended to `data/session_log.csv` for an audit trail.
 ## Project Structure
 
 ```
-buy_hold_sell_dashboard/
-├── notebooks/
-│   └── main.ipynb              ← Only file you run
+stock-analysis-dashboard/
 ├── src/
 │   ├── __init__.py
 │   ├── data_fetcher.py         ← yfinance + caching
@@ -142,15 +155,29 @@ buy_hold_sell_dashboard/
 │   ├── visualizations.py       ← Plotly chart factory
 │   ├── panel_generator.py      ← 5 analysis panels + ML panel
 │   ├── report_generator.py     ← HTML CEO Report
-│   └── utils.py                ← Shared helpers
+│   ├── utils.py                ← Shared helpers
+│   └── first_principles/       ← First-principles engine (SEC, FRED, yfinance)
+├── tests/                      ← Test suite (mirrors src/ layout)
+├── scripts/
+│   ├── run_all_reports.py      ← Generate all 6 report variants
+│   └── run_msft_reports.py     ← Generate MSFT reports (dev/demo)
+├── notebooks/
+│   └── stock_analysis.ipynb    ← Interactive analysis notebook
 ├── config/
-│   └── default_thresholds.json ← Editable default thresholds
-│   └── user_thresholds/        ← Your saved threshold profiles
-├── data/
-│   └── cache/                  ← Timestamped raw data (auto-managed)
-│   └── session_log.csv         ← Analysis audit trail
-├── outputs/                    ← CEO Reports go here
-├── requirements.txt
+│   └── default_thresholds.json ← Editable sector-aware thresholds
+├── docs/
+│   └── architecture.md         ← System architecture diagram
+├── data/                       ← Runtime-generated (git-ignored)
+│   ├── cache/
+│   └── session_log.csv
+├── outputs/                    ← HTML reports go here (git-ignored)
+├── .env.example                ← Copy to .env and fill in secrets
+├── CHANGELOG.md
+├── LICENSE
+├── Makefile                    ← make install / make test / make run
+├── pyproject.toml              ← Build config + tool settings
+├── requirements.txt            ← Production dependencies
+├── requirements-dev.txt        ← Dev/notebook/test dependencies
 └── README.md
 ```
 

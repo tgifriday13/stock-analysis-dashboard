@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "stock-analysis-dashboard"
+version = "0.1.0"
+description = "Fundamental-analysis CEO dashboard: 6 core questions, first-principles engine, HTML reports."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "yfinance>=0.2.36",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "plotly>=5.18.0",
+    "scikit-learn>=1.3.0",
+    "requests>=2.31.0",
+    "python-dateutil>=2.8.2",
+    "pytz>=2023.3",
+    "kaleido>=0.2.1",
+    "jinja2>=3.1.2",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+run-reports    = "scripts.run_all_reports:main"
+
+[tool.pytest.ini_options]
+testpaths   = ["tests"]
+addopts     = "-v --tb=short"
+
+[tool.black]
+line-length    = 100
+target-version = ["py310"]
+
+[tool.isort]
+profile        = "black"
+line_length    = 100
+
+[tool.ruff]
+line-length = 100
+select      = ["E", "F", "W", "I"]

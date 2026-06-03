@@ -16,12 +16,12 @@ from typing import Dict, Tuple
 # Ensure local imports resolve when running from project root.
 import sys
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(Path(__file__).parent / ".env")
+    load_dotenv(Path(__file__).parent.parent / ".env")
 except ImportError:
     pass
 
