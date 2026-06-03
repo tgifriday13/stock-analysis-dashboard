@@ -494,7 +494,7 @@ def _present_inner_content(
         for k, v in m.scores.items()
     )
     score_table = f'<table style="width:100%;border-collapse:collapse">{score_rows}</table>'
-    score_card = _card("Fundamental Scores — 6 Questions", score_table, border_color=COLOR_ACCENT, icon="🎯")
+    score_card = _card("Fundamental Scores — 7 Questions", score_table, border_color=COLOR_ACCENT, icon="🎯")
 
     legend_html = color_legend_html()
     ceo_summary = _build_ceo_decision_summary(m, recommendation, recommendation_explanation)
@@ -505,7 +505,7 @@ def _present_inner_content(
     if "scorecard_radar" in charts:
         scorecard_chart_html += _fig_to_html(charts["scorecard_radar"])
 
-    q_sections = _build_6q_sections(m, charts)
+    q_sections = _build_7q_sections(m, charts)
 
     panel_sections = []
     if "bullish" in panels:
@@ -1628,8 +1628,8 @@ def _overall_score_widget(score: float) -> str:
     </div>"""
 
 
-def _build_6q_sections(m: AllMetrics, charts: Dict[str, go.Figure]) -> str:
-    """Build the 6-question detail sections with metric interpretation guides."""
+def _build_7q_sections(m: AllMetrics, charts: Dict[str, go.Figure]) -> str:
+    """Build the 7-question detail sections with metric interpretation guides."""
     sector = m.q1.sector
     sections = []
 
@@ -1853,6 +1853,36 @@ def _build_6q_sections(m: AllMetrics, charts: Dict[str, go.Figure]) -> str:
         technical_rows=q6_technical_rows,
     ))
 
+    # ── Q7 ─────────────────────────────────────────────────────────────────────
+    q7_ctx = [
+        ("Thesis Status",   _thesis_label(m.scores.get("Q7_Thesis"))),
+        ("Growth Signal",   m.q2.growth_trend or "Unknown"),
+        ("Margin Signal",   m.q3.margin_trend or "Unknown"),
+        ("Balance Sheet",   m.q5.financial_risk_trend or "Unknown"),
+        ("Valuation Risk",  m.q5.financial_risk_trend or "Unknown"),
+    ]
+    if m.mode == "existing":
+        q7_ctx.append(("Valuation vs. Purchase", m.q6.valuation_change or "Unknown"))
+        if m.portfolio.position_weight is not None:
+            q7_ctx.append(("Portfolio Weight", fmt_pct(m.portfolio.position_weight)))
+
+    sections.append(_q_section(
+        number=7,
+        question="Is the investment thesis still intact, and what would make me wrong?",
+        score=m.scores.get("Q7_Thesis"),
+        chart_html="",
+        border_color="#8e44ad",
+        why_matters=(
+            "The investment thesis is the single reason you own or are considering buying a stock. "
+            "This question synthesises Q2–Q6 to tell you whether that reason still holds — "
+            "or whether something has changed that should make you reconsider."
+        ),
+        main_takeaway=_q7_takeaway(m),
+        interpretation_table="",
+        context_items=q7_ctx,
+        technical_rows=[],
+    ))
+
     return "\n".join(sections)
 
 
@@ -2071,6 +2101,65 @@ def _q6_takeaway(m: AllMetrics) -> str:
         return f"Valuation is expensive — P/E of {pe} with a margin of safety of {mos}. A premium price means execution must be near-perfect. Risk/reward is skewed."
 
 
+def _thesis_label(score: Optional[float]) -> str:
+    """Map Q7 score to a plain-English thesis-health label."""
+    if score is None:
+        return "Thesis Unknown"
+    if score >= 7.0:
+        return "Thesis Intact"
+    if score >= 5.0:
+        return "Thesis Watch"
+    if score >= 3.0:
+        return "Thesis At Risk"
+    return "Thesis Broken"
+
+
+def _q7_takeaway(m: AllMetrics) -> str:
+    """Generate a plain-English thesis-health summary answering three questions."""
+    sc = m.scores
+    pillar_names = {
+        "Q2_Growth":        "growth",
+        "Q3_Profitability": "profitability",
+        "Q4_CashFlow":      "free cash flow",
+        "Q5_BalanceSheet":  "balance sheet",
+        "Q6_Valuation":     "valuation",
+    }
+    strong   = [pillar_names[k] for k in pillar_names if sc.get(k, 5) >= 7]
+    watching = [pillar_names[k] for k in pillar_names if 4 <= sc.get(k, 5) < 7]
+    weak     = [pillar_names[k] for k in pillar_names if sc.get(k, 5) < 4]
+
+    if m.mode == "existing":
+        if m.q6.valuation_change in ("Much More Expensive", "More Expensive"):
+            watching.append("valuation (higher than at purchase)")
+        if m.portfolio.position_weight is not None and m.portfolio.position_weight > 0.15:
+            watching.append("portfolio concentration")
+
+    label = _thesis_label(sc.get("Q7_Thesis"))
+
+    supports_str = (
+        f"{', '.join(strong).capitalize()} {'are' if len(strong) > 1 else 'is'} scoring well."
+        if strong else "No individual pillar is currently in the top tier."
+    )
+    watching_str = (
+        f"Keep an eye on {', '.join(watching)}."
+        if watching else "No areas of immediate concern."
+    )
+    change_mind_str = (
+        f"The thesis would come under real pressure if {' and '.join(weak)} deteriorate further."
+        if weak else (
+            "Watch for growth deceleration, margin compression, or valuation expansion beyond "
+            "fundamentals — any of these could shift the risk/reward unfavourably."
+        )
+    )
+
+    return (
+        f"<strong>Thesis status: {label}.</strong><br>"
+        f"<strong>What supports the thesis:</strong> {supports_str}<br>"
+        f"<strong>What needs watching:</strong> {watching_str}<br>"
+        f"<strong>What would change my mind:</strong> {change_mind_str}"
+    )
+
+
 # ── CEO Decision Summary ─────────────────────────────────────────────────────
 
 def _build_ceo_decision_summary(
@@ -2097,6 +2186,7 @@ def _build_ceo_decision_summary(
             "Q4_CashFlow": "cash flow",
             "Q5_BalanceSheet": "balance sheet strength",
             "Q6_Valuation": "valuation",
+            "Q7_Thesis": "thesis health",
         }
         return labels.get(key, key)
 

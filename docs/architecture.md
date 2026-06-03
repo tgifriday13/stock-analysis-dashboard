@@ -16,7 +16,7 @@ User Input (ticker, mode, thresholds)
          ▼                            ▼
 ┌─────────────────┐         ┌─────────────────┐
 │ MetricsCalc     │         │ FP Report JSON  │
-│ 6-question      │         │ + HTML audit    │
+│ 7-question      │         │ + HTML audit    │
 │ dataclasses     │         │   card          │
 └────────┬────────┘         └─────────────────┘
          │

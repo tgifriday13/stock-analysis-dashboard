@@ -685,7 +685,7 @@ class MetricsCalculator:
 
     def _compute_scores(self, m: AllMetrics) -> Dict[str, float]:
         """
-        Score each of the 6 questions on a 0–10 scale.
+        Score each of the 7 questions on a 0–10 scale.
         10 = outstanding, 5 = acceptable, 0 = very poor.
         """
         scores = {}
@@ -775,6 +775,20 @@ class MetricsCalculator:
             if v.peg_ratio <= 1.0: v_score += 1
             elif v.peg_ratio > 2.5: v_score -= 1
         scores["Q6_Valuation"] = round(max(0.0, min(10.0, v_score)), 1)
+
+        # Q7 — Thesis Health (synthesises Q2–Q6 signals into a single thesis assessment)
+        fundamental_avg = (
+            scores["Q2_Growth"] + scores["Q3_Profitability"] +
+            scores["Q4_CashFlow"] + scores["Q5_BalanceSheet"] +
+            scores["Q6_Valuation"]
+        ) / 5
+        q7_score = fundamental_avg
+        if m.mode == "existing":
+            if m.q6.valuation_change in ("Much More Expensive", "More Expensive"):
+                q7_score = max(0.0, q7_score - 0.5)
+            if m.portfolio.position_weight is not None and m.portfolio.position_weight > 0.15:
+                q7_score = max(0.0, q7_score - 0.5)
+        scores["Q7_Thesis"] = round(max(0.0, min(10.0, q7_score)), 1)
 
         return scores
 

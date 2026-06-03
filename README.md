@@ -80,7 +80,7 @@ Every metric shows a **"now vs. when you bought"** delta, so you can see exactly
 - **Saved profiles** — save your personal threshold set with `tm.save("my_profile")` and reload with `THRESHOLD_PROFILE = "my_profile"`
 
 ### 5 Analysis Panels
-1. **Why Buy / Why Buy More** — bullish signals from all 6 questions
+1. **Why Buy / Why Buy More** — bullish signals from all 7 questions
 2. **Why Hold** — neutral/mixed signals
 3. **Why Sell / Why Trim** — bearish risk signals
 4. **Dividends & Shareholder Returns** — yield, payout ratio, FCF coverage, consecutive years, buybacks; shows N/A gracefully for non-payers
@@ -96,7 +96,7 @@ All outputs are **clearly labeled as predictions** — not financial advice.
 ### CEO Report
 - One self-contained **HTML file** saved to `outputs/`
 - Auto-opens in your browser
-- Includes: executive summary, recommendation box, scorecard, all 6 questions with charts, all panels, peer comparison (optional), analyst notes
+- Includes: executive summary, recommendation box, scorecard, all 7 questions with charts, all panels, peer comparison (optional), analyst notes
 - Readable by a CEO who knows nothing about the code
 
 ### Multi-Stock Comparison
@@ -150,7 +150,7 @@ stock-analysis-dashboard/
 ├── src/
 │   ├── __init__.py
 │   ├── data_fetcher.py         ← yfinance + caching
-│   ├── metrics_calculator.py   ← All fundamental metrics (6 questions)
+│   ├── metrics_calculator.py   ← All fundamental metrics (7 questions)
 │   ├── threshold_manager.py    ← Smart, sector-aware thresholds
 │   ├── visualizations.py       ← Plotly chart factory
 │   ├── panel_generator.py      ← 5 analysis panels + ML panel

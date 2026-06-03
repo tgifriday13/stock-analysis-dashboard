@@ -136,9 +136,9 @@ class TestAllMetricsDataclass:
 
     def test_scores_mutation(self):
         m = AllMetrics(ticker="X", company_name="X Corp", mode="new")
-        m.scores = {"Q1": 8.0, "Q2": 7.5, "Q3": 6.0, "Q4": 9.0, "Q5": 7.0, "Q6": 5.5}
-        m.overall_score = sum(m.scores.values()) / 6
-        assert m.overall_score == pytest.approx(7.166, rel=1e-2)
+        m.scores = {"Q1": 8.0, "Q2": 7.5, "Q3": 6.0, "Q4": 9.0, "Q5": 7.0, "Q6": 5.5, "Q7": 7.0}
+        m.overall_score = sum(m.scores.values()) / len(m.scores)
+        assert m.overall_score == pytest.approx(50.0 / 7, rel=1e-2)
 
     def test_mode_new(self):
         m = AllMetrics(ticker="X", company_name="X Corp", mode="new")
@@ -447,21 +447,21 @@ class TestCapCategory:
 # ── Overall score computation ─────────────────────────────────────────────────
 
 class TestOverallScore:
-    def test_average_of_all_six(self):
+    def test_average_of_all_seven(self):
         m = AllMetrics(ticker="X", company_name="X Corp", mode="new")
-        m.scores = {"Q1": 6.0, "Q2": 7.0, "Q3": 8.0, "Q4": 5.0, "Q5": 9.0, "Q6": 7.0}
+        m.scores = {"Q1": 6.0, "Q2": 7.0, "Q3": 8.0, "Q4": 5.0, "Q5": 9.0, "Q6": 7.0, "Q7": 7.0}
         m.overall_score = sum(m.scores.values()) / len(m.scores)
-        assert m.overall_score == pytest.approx(7.0)
+        assert m.overall_score == pytest.approx(49.0 / 7, rel=1e-2)
 
     def test_perfect_scores(self):
         m = AllMetrics(ticker="X", company_name="X Corp", mode="new")
-        m.scores = {q: 10.0 for q in ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"]}
+        m.scores = {q: 10.0 for q in ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7"]}
         m.overall_score = sum(m.scores.values()) / len(m.scores)
         assert m.overall_score == pytest.approx(10.0)
 
     def test_zero_scores(self):
         m = AllMetrics(ticker="X", company_name="X Corp", mode="new")
-        m.scores = {q: 0.0 for q in ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"]}
+        m.scores = {q: 0.0 for q in ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7"]}
         m.overall_score = sum(m.scores.values()) / len(m.scores)
         assert m.overall_score == pytest.approx(0.0)
 
