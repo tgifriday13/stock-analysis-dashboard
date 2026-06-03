@@ -458,9 +458,9 @@ class TestHardFailBanner:
 
     def test_single_reason_renders(self):
         html = _fp_hard_fail_banner(["P6: Interest coverage below minimum"])
-        assert "Hard Fail" in html
+        assert "Thesis At Risk" in html
         assert "P6: Interest coverage below minimum" in html
-        assert "🚨" in html
+        assert "⚠️" in html
 
     def test_multiple_reasons_all_rendered(self):
         reasons = ["P6: Interest coverage below minimum", "P3: Negative accruals"]
@@ -468,13 +468,13 @@ class TestHardFailBanner:
         for r in reasons:
             assert r in html
 
-    def test_hard_fail_banner_red_styling(self):
+    def test_thesis_concern_banner_amber_styling(self):
         html = _fp_hard_fail_banner(["P6: fail"])
-        assert "#c0392b" in html  # dark red
+        assert "#d35400" in html  # amber/orange
 
-    def test_downgrade_warning_present(self):
+    def test_principle_concern_note_present(self):
         html = _fp_hard_fail_banner(["P6: fail"])
-        assert "automatically downgraded" in html
+        assert "core investment principles" in html
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -827,26 +827,23 @@ class TestPastReport:
 
     def test_no_present_view_score_card(self):
         html = self._build()
-        # Present view section specific to 6Q is absent in past view
-        assert "Fundamental Scores — 6 Questions" not in html
+        # Present view section specific to 7Q is absent in past view
+        assert "Fundamental Scores — 7 Questions" not in html
 
-    def test_hard_fail_banner_shown_when_falsified(self):
+    def test_thesis_concern_banner_shown_when_falsified(self):
         fp = _make_fp_report(questions=[
             _make_question("P1", signal="Weak", falsified=True, falsification_reason="Coverage breach"),
             _make_question("P2"),
             _make_question("F1"),
         ])
         html = self._build(fp_report=fp)
-        assert "Hard Fail" in html
+        assert "Thesis At Risk" in html
         assert "Coverage breach" in html
 
-    def test_hard_fail_banner_absent_when_clean(self):
-        # "Hard Fail" always appears as a scorecard table row label ("Hard Fail | No").
-        # The alert BANNER only fires when a question is falsified.  Check for the
-        # banner-specific phrase rather than the bare label.
+    def test_thesis_concern_banner_absent_when_clean(self):
         fp = _make_fp_report()
         html = self._build(fp_report=fp)
-        assert "Hard Fail — Falsification Breach Detected" not in html
+        assert "Thesis At Risk — Principle Concerns Identified" not in html
 
     def test_staleness_warning_shown_for_stale_data(self):
         html = _build_html(
@@ -928,14 +925,14 @@ class TestFutureReport:
         html = self._build()
         assert "informational purposes only" in html
 
-    def test_hard_fail_banner_shown_for_future_falsification(self):
+    def test_thesis_concern_banner_shown_for_future_falsification(self):
         fp = _make_fp_report(questions=[
             _make_question("P1"),
             _make_question("F1", signal="Weak", falsified=True, falsification_reason="Stress test failed"),
             _make_question("F2"),
         ])
         html = self._build(fp_report=fp)
-        assert "Hard Fail" in html
+        assert "Thesis At Risk" in html
         assert "Stress test failed" in html
 
     def test_no_fp_report_renders_fallback(self):
@@ -1130,7 +1127,7 @@ class TestQuestionCardRendering:
 
     def test_no_falsification_shows_clean_message(self):
         html = self._build_past([_make_question("P1", falsified=False)])
-        assert "No falsification breach." in html
+        assert "All principle checks passed." in html
 
     def test_coverage_ratio_100_percent_shown_green(self):
         html = self._build_past([_make_question("P1", coverage_ratio=1.0)])

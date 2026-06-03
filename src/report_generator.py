@@ -990,9 +990,9 @@ def _first_principles_question_card(question: "QuestionResult", sector: Optional
     for key in sorted(metrics.keys()):
         technical_rows.append((str(key), _format_metric_value(metrics[key])))
 
-    falsification_text = "No falsification breach."
+    falsification_text = "All principle checks passed."
     if falsified:
-        falsification_text = f"Falsification breach: {escape(falsification_reason or 'rule triggered')}"
+        falsification_text = f"Principle concern: {escape(falsification_reason or 'rule triggered')}"
 
     guide_entries = _build_first_principles_interpretation_entries(question)
     if guide_entries:
@@ -1027,7 +1027,7 @@ def _first_principles_question_card(question: "QuestionResult", sector: Optional
 # ── First-principles dashboard helper functions ───────────────────────────────
 
 def _fp_hard_fail_banner(falsification_reasons: List[str]) -> str:
-    """Prominent red alert bar when one or more questions triggered a hard fail."""
+    """Amber thesis-concern card when one or more questions flagged a principle concern."""
     if not falsification_reasons:
         return ""
     items = "".join(
@@ -1035,18 +1035,133 @@ def _fp_hard_fail_banner(falsification_reasons: List[str]) -> str:
         for r in falsification_reasons
     )
     return f"""
-    <div style="background:#fdecea;border:2px solid #c0392b;border-radius:8px;
+    <div style="background:#fef9e7;border:2px solid #d35400;border-radius:8px;
                 padding:16px 20px;margin:0 0 16px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-        <span style="font-size:20px">🚨</span>
-        <strong style="font-size:15px;color:#7b241c">Hard Fail — Falsification Breach Detected</strong>
+        <span style="font-size:20px">⚠️</span>
+        <strong style="font-size:15px;color:#784212">Thesis At Risk — Principle Concerns Identified</strong>
       </div>
-      <ul style="margin:0;padding-left:20px;color:#922b21">{items}</ul>
-      <div style="margin-top:8px;font-size:12px;color:#c0392b;font-style:italic">
-        A hard fail means at least one core investment principle is violated. The recommendation is
-        automatically downgraded regardless of other signal counts.
+      <ul style="margin:0;padding-left:20px;color:#935116">{items}</ul>
+      <div style="margin-top:8px;font-size:12px;color:#d35400;font-style:italic">
+        One or more core investment principles are not currently supported by the data.
+        Review the flagged questions and consider whether the investment thesis still holds.
       </div>
     </div>"""
+
+
+def _fp_thesis_health_card(
+    questions: list,
+    hard_fail: bool,
+    falsification_reasons: List[str],
+    view: str,
+    synthesis_counts: Dict[str, int],
+) -> str:
+    """Q7-style thesis health synthesis for past/future FP views.
+
+    Answers the same three questions as Q7 in the present view:
+    - What supports the thesis
+    - What needs watching
+    - What would change my mind
+    """
+    view_label = "past" if view == "past" else "forward"
+    strong_qs  = [q for q in questions if str(getattr(q, "signal", "")) == "Strong"]
+    watch_qs   = [q for q in questions if str(getattr(q, "signal", "")) == "Watch"]
+    weak_qs    = [q for q in questions if str(getattr(q, "signal", "")) == "Weak"]
+    flagged_qs = [q for q in questions if bool(getattr(q, "falsified", False))]
+
+    # Thesis label
+    if hard_fail or len(weak_qs) >= 2:
+        label = "Thesis At Risk"
+        label_color = "#d35400"
+    elif len(watch_qs) > 0 or len(weak_qs) == 1:
+        label = "Thesis Watch"
+        label_color = "#f39c12"
+    elif len(strong_qs) >= 4:
+        label = "Thesis Intact"
+        label_color = "#27ae60"
+    else:
+        label = "Thesis Watch"
+        label_color = "#f39c12"
+
+    # What supports
+    if strong_qs:
+        support_parts = []
+        for q in strong_qs[:3]:
+            qid = escape(str(getattr(q, "question_id", "")))
+            short = escape(str(getattr(q, "takeaway", "") or getattr(q, "decision_reason", ""))[:120])
+            support_parts.append(f"<strong style='color:#27ae60'>{qid}</strong> — {short}")
+        supports_html = "<br>".join(support_parts)
+    else:
+        supports_html = f'<span style="color:#7f8c8d;font-style:italic">No {view_label} questions are currently Strong.</span>'
+
+    # What needs watching
+    watch_parts = []
+    for q in watch_qs[:3]:
+        qid = escape(str(getattr(q, "question_id", "")))
+        short = escape(str(getattr(q, "takeaway", "") or getattr(q, "decision_reason", ""))[:100])
+        watch_parts.append(f"<strong style='color:#f39c12'>{qid}</strong> — {short}")
+    if flagged_qs and not hard_fail:
+        for q in flagged_qs[:2]:
+            qid = escape(str(getattr(q, "question_id", "")))
+            reason = escape(str(getattr(q, "falsification_reason", "") or ""))[:100]
+            watch_parts.append(f"<strong style='color:#d35400'>{qid}</strong> — Principle concern: {reason}")
+    watching_html = (
+        "<br>".join(watch_parts)
+        if watch_parts
+        else f'<span style="color:#7f8c8d;font-style:italic">No {view_label} questions currently flagged for monitoring.</span>'
+    )
+
+    # What would change my mind
+    if weak_qs or flagged_qs:
+        change_parts = []
+        for q in (flagged_qs or weak_qs)[:3]:
+            qid = escape(str(getattr(q, "question_id", "")))
+            reason = (
+                escape(str(getattr(q, "falsification_reason", "") or ""))
+                or escape(str(getattr(q, "takeaway", "") or getattr(q, "decision_reason", ""))[:100])
+            )
+            change_parts.append(f"<strong style='color:#e74c3c'>{qid}</strong> — {reason}")
+        change_html = "<br>".join(change_parts)
+    else:
+        change_html = (
+            f'<span style="color:#7f8c8d">Watch for any {view_label} question weakening to Weak, '
+            f'or coverage dropping on key data fields — that would shift this to Avoid/Trim.</span>'
+        )
+
+    def _section(title: str, body: str) -> str:
+        return (
+            f'<div style="margin:10px 0">'
+            f'<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;'
+            f'color:#7f8c8d;margin-bottom:4px">{title}</div>'
+            f'<div style="font-size:13px;color:#2c3e50;line-height:1.55">{body}</div>'
+            f'</div>'
+        )
+
+    content = f"""
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <div>
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#7f8c8d">Thesis Status</div>
+        <div style="font-size:22px;font-weight:900;color:{label_color}">{label}</div>
+        <div style="font-size:12px;color:#7f8c8d">
+          {synthesis_counts.get('Strong',0)} Strong · 
+          {synthesis_counts.get('Watch',0)} Watch · 
+          {synthesis_counts.get('Weak',0)} Weak · 
+          {synthesis_counts.get('Insufficient',0)} N/A
+        </div>
+      </div>
+    </div>
+    <div style="border-top:1px solid #ecf0f1;padding-top:12px">
+      {_section("What supports the thesis", supports_html)}
+      {_section("What needs watching", watching_html)}
+      {_section("What would change my mind", change_html)}
+    </div>
+    """
+    return _card(
+        f"Q7 — Thesis Health ({view_label.capitalize()} View)",
+        content,
+        border_color="#8e44ad",
+        icon="🔍",
+    )
 
 
 def _fp_staleness_warning(staleness_label: str) -> str:
@@ -1106,7 +1221,7 @@ def _fp_signal_scorecard(questions: list) -> str:
             takeaway += "…"
         short_q = _SHORT_Q.get(qid, escape(str(getattr(q, "question", "")))[:80])
         falsified = bool(getattr(q, "falsified", False))
-        fail_icon = ' <span title="Hard fail" style="color:#e74c3c">⚡</span>' if falsified else ""
+        fail_icon = ' <span title="Principle concern" style="color:#d35400">⚡</span>' if falsified else ""
 
         coverage = getattr(q, "coverage", None)
         cov_ratio = float(getattr(coverage, "coverage_ratio", float("nan")))
@@ -1183,9 +1298,9 @@ def _fp_investor_decision_card(
     view_label = "past" if view == "past" else "forward"
     if hard_fail:
         why_text = (
-            f"At least one {view_label} first-principles question triggered a hard fail "
-            f"(falsification breach), which automatically drives the recommendation to Avoid/Trim "
-            f"regardless of other signals."
+            f"At least one {view_label} first-principles question has flagged a principle concern, "
+            f"indicating that a core investment assumption is not currently supported by the data. "
+            f"This drives the recommendation to Avoid/Trim."
         )
     elif weak >= 2:
         why_text = (
@@ -1282,7 +1397,7 @@ def _fp_investor_decision_card(
     elif decision in ("Avoid/Trim", "Avoid"):
         flip_html = (
             f'<span style="color:{COLOR_OK}">This becomes Monitor if</span>: '
-            f'hard-fail conditions are resolved (e.g., next filing restores data coverage), '
+            f'flagged principle concerns are resolved (e.g., next filing restores data coverage), '
             f'weak signal count drops below 2, or valuation improves materially. '
             f'<span style="color:{COLOR_STRONG}">This becomes Go if</span>: '
             f'≥4 questions reach Strong with zero Weak.'
@@ -1290,9 +1405,9 @@ def _fp_investor_decision_card(
     else:  # Monitor
         flip_html = (
             f'<span style="color:{COLOR_STRONG}">This becomes Go if</span>: '
-            f'≥4 of {total} {view_label} questions reach Strong with zero Weak signals and no hard fail. '
+            f'≥4 of {total} {view_label} questions reach Strong with zero Weak signals. '
             f'<span style="color:{COLOR_WEAK}">This becomes Avoid/Trim if</span>: '
-            f'≥2 questions become Weak, or a falsification breach is triggered.'
+            f'≥2 questions become Weak, or a principle concern is flagged.'
         )
 
     def _row(label: str, content: str, label_color: str = COLOR_NEUTRAL) -> str:
@@ -1350,8 +1465,8 @@ def _fp_header_score_widget(synthesis_counts: Dict[str, int], hard_fail: bool) -
     if hard_fail:
         fail_badge = (
             '<div style="margin-top:4px">'
-            '<span style="background:#c0392b;color:white;border-radius:4px;'
-            'padding:2px 8px;font-size:11px;font-weight:700">⚡ HARD FAIL</span>'
+            '<span style="background:#d35400;color:white;border-radius:4px;'
+            'padding:2px 8px;font-size:11px;font-weight:700">⚠️ Thesis At Risk</span>'
             '</div>'
         )
     return f"""
@@ -1427,12 +1542,15 @@ def _fp_inner_content(
     )
 
     hard_fail_banner = _fp_hard_fail_banner(falsification_reasons) if hard_fail else ""
+    thesis_health_card = _fp_thesis_health_card(
+        questions, hard_fail, falsification_reasons, view, synthesis_counts,
+    )
     staleness_warning = _fp_staleness_warning(m.staleness_label or "")
     data_quality_banner_html = _data_quality_banner(metrics)
 
     hf_cell = (
-        "<strong style='color:#e74c3c'>YES — Falsification Breach</strong>"
-        if hard_fail else "No"
+        "<strong style='color:#d35400'>Thesis At Risk</strong>"
+        if hard_fail else "Thesis Intact"
     )
     snapshot = _card(
         "Company Snapshot",
@@ -1448,7 +1566,7 @@ def _fp_inner_content(
             {_metric_row("View", view_title + " First-Principles")}
             {_metric_row("Data Freshness", m.staleness_label or "N/A")}
             {_metric_row("Questions Assessed", str(len(questions)))}
-            {_metric_row("Hard Fail", hf_cell)}
+            {_metric_row("Thesis Health", hf_cell)}
           </table>
         </div>
         """,
@@ -1510,6 +1628,7 @@ def _fp_inner_content(
         staleness_warning,
         data_quality_banner_html,
         snapshot,
+        thesis_health_card,
         decision_card,
         rec_box,
         scorecard,
