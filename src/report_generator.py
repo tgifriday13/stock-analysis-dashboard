@@ -1979,7 +1979,14 @@ def _build_7q_sections(m: AllMetrics, charts: Dict[str, go.Figure]) -> str:
         ("Margin Signal",   m.q3.margin_trend or "Unknown"),
         ("Balance Sheet",   m.q5.financial_risk_trend or "Unknown"),
         ("Valuation Risk",  m.q5.financial_risk_trend or "Unknown"),
+        ("Revenue Momentum",    m.q2.growth_trend),
+        ("ROIC Trend",          m.q3.roic_trend),
     ]
+    if m.q4.share_dilution_pct is not None:
+        sign = "+" if m.q4.share_dilution_pct >= 0 else ""
+        q7_ctx.append(("Share Count Change", f"{sign}{m.q4.share_dilution_pct:.1%} YoY"))
+    if m.q4.fcf_conversion_ratio is not None:
+        q7_ctx.append(("FCF Conversion", f"{m.q4.fcf_conversion_ratio:.0%} of net income"))
     if m.mode == "existing":
         q7_ctx.append(("Valuation vs. Purchase", m.q6.valuation_change or "Unknown"))
         if m.portfolio.position_weight is not None:
@@ -2247,6 +2254,32 @@ def _q7_takeaway(m: AllMetrics) -> str:
     watching = [pillar_names[k] for k in pillar_names if 4 <= sc.get(k, 5) < 7]
     weak     = [pillar_names[k] for k in pillar_names if sc.get(k, 5) < 4]
 
+    # — 4 additional thesis signals
+    if m.q2.growth_trend == "Decelerating":
+        watching.append("revenue momentum (decelerating)")
+    elif m.q2.growth_trend == "Accelerating" and "growth" not in strong:
+        strong.append("revenue momentum (accelerating)")
+
+    if m.q3.roic_trend == "Deteriorating":
+        watching.append("return on capital (eroding)")
+    elif m.q3.roic_trend == "Improving":
+        strong.append("return on capital (improving)")
+
+    if m.q4.share_dilution_pct is not None:
+        if m.q4.share_dilution_pct > 0.03:
+            watching.append(f"share dilution (+{m.q4.share_dilution_pct:.1%} shares YoY)")
+        elif m.q4.share_dilution_pct > 0.01:
+            watching.append(f"mild share dilution (+{m.q4.share_dilution_pct:.1%} YoY)")
+        elif m.q4.share_dilution_pct < -0.02:
+            strong.append(f"buybacks reducing share count ({m.q4.share_dilution_pct:.1%} YoY)")
+
+    if m.q4.fcf_conversion_ratio is not None:
+        if m.q4.fcf_conversion_ratio < 0.5:
+            weak.append(f"earnings quality (FCF only {m.q4.fcf_conversion_ratio:.0%} of net income)")
+        elif m.q4.fcf_conversion_ratio < 0.7:
+            watching.append(f"earnings quality (FCF {m.q4.fcf_conversion_ratio:.0%} of net income — monitor)")
+
+    # — Existing-holding adjustments
     if m.mode == "existing":
         if m.q6.valuation_change in ("Much More Expensive", "More Expensive"):
             watching.append("valuation (higher than at purchase)")
@@ -2266,8 +2299,8 @@ def _q7_takeaway(m: AllMetrics) -> str:
     change_mind_str = (
         f"The thesis would come under real pressure if {' and '.join(weak)} deteriorate further."
         if weak else (
-            "Watch for growth deceleration, margin compression, or valuation expansion beyond "
-            "fundamentals — any of these could shift the risk/reward unfavourably."
+            "Watch for growth deceleration, margin compression, ROIC erosion, or share dilution "
+            "accelerating — any of these could shift the risk/reward unfavourably."
         )
     )
 

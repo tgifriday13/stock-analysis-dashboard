@@ -74,6 +74,8 @@ class Q3Profitability:
     roe: Optional[float] = None
     roa: Optional[float] = None
     roic: Optional[float] = None
+    roic_prior: Optional[float] = None          # prior-year ROIC estimate
+    roic_trend: str = "Unknown"                  # Improving / Stable / Deteriorating
     # Prior period (for trend analysis)
     gross_margin_prior: Optional[float] = None
     operating_margin_prior: Optional[float] = None
@@ -96,6 +98,10 @@ class Q4CashFlow:
     roic: Optional[float] = None
     shares_outstanding: Optional[float] = None
     buybacks_ttm: Optional[float] = None
+    shares_outstanding_prior: Optional[float] = None   # prior-year share count
+    share_dilution_pct: Optional[float] = None          # YoY % change in share count (positive = dilution)
+    net_income: Optional[float] = None                  # net income for FCF conversion calc
+    fcf_conversion_ratio: Optional[float] = None        # free_cash_flow / net_income
     # Dividends (always computed; N/A for non-payers)
     dividend_yield: Optional[float] = None
     dividend_per_share_ttm: Optional[float] = None
@@ -417,6 +423,21 @@ class MetricsCalculator:
         invested_capital = self._compute_invested_capital()
         q.roic = safe_divide(nopat, invested_capital)
 
+        # Prior-year ROIC estimate (uses prior income column with same invested capital proxy)
+        if not self.income.empty and len(self.income.columns) >= 2:
+            ni_prior = self._get_income_col(1, "Net Income", "Net Income From Continuing Operation Net Minority Interest")
+            q.roic_prior = safe_divide(ni_prior, invested_capital)
+
+        # ROIC trend
+        if q.roic is not None and q.roic_prior is not None:
+            delta = q.roic - q.roic_prior
+            if delta > 0.02:
+                q.roic_trend = "Improving"
+            elif delta < -0.02:
+                q.roic_trend = "Deteriorating"
+            else:
+                q.roic_trend = "Stable"
+
         # Prior period margins (1 year ago column)
         if not self.income.empty and len(self.income.columns) >= 2:
             rev_now = self._get_income_col(0, "Total Revenue")
@@ -490,6 +511,28 @@ class MetricsCalculator:
         q.buybacks_ttm = self._get_cf_row("Repurchase Of Capital Stock", "Common Stock Payments")
         if q.buybacks_ttm is not None:
             q.buybacks_ttm = abs(q.buybacks_ttm)
+
+        # Net income (for FCF conversion ratio)
+        q.net_income = safe_float(i.get("netIncome")) or \
+            self._get_income_row("Net Income", "Net Income From Continuing Operation Net Minority Interest")
+
+        # FCF conversion ratio — FCF / Net Income (only meaningful when NI > 0)
+        if q.net_income is not None and q.net_income > 0 and q.free_cash_flow is not None:
+            q.fcf_conversion_ratio = q.free_cash_flow / q.net_income
+
+        # Prior-year share count — pull from balance sheet column 1 if available
+        if not self.balance.empty and len(self.balance.columns) >= 2:
+            share_rows = ["Share Issued", "Common Stock", "Ordinary Shares Number"]
+            row_found = next((r for r in share_rows if r in self.balance.index), None)
+            if row_found:
+                try:
+                    q.shares_outstanding_prior = safe_float(self.balance.loc[row_found].iloc[1])
+                except Exception:
+                    pass
+
+        # Share dilution — YoY % change in shares outstanding
+        if q.shares_outstanding is not None and q.shares_outstanding_prior is not None and q.shares_outstanding_prior > 0:
+            q.share_dilution_pct = (q.shares_outstanding - q.shares_outstanding_prior) / q.shares_outstanding_prior
 
         # Dividends — use trailingAnnualDividendRate for the TTM per-share amount.
         # NOTE: yfinance 'dividendYield' returns a percentage value (e.g. 0.38 = 0.38%),
@@ -776,18 +819,51 @@ class MetricsCalculator:
             elif v.peg_ratio > 2.5: v_score -= 1
         scores["Q6_Valuation"] = round(max(0.0, min(10.0, v_score)), 1)
 
-        # Q7 — Thesis Health (synthesises Q2–Q6 signals into a single thesis assessment)
+        # Q7 — Thesis Health (synthesises Q2–Q6 signals + 4 additional thesis signals)
         fundamental_avg = (
             scores["Q2_Growth"] + scores["Q3_Profitability"] +
             scores["Q4_CashFlow"] + scores["Q5_BalanceSheet"] +
             scores["Q6_Valuation"]
         ) / 5
         q7_score = fundamental_avg
+
+        # — Signal 1: Revenue momentum (accelerating thesis vs decelerating)
+        if m.q2.growth_trend == "Accelerating":
+            q7_score += 0.3
+        elif m.q2.growth_trend == "Decelerating":
+            q7_score -= 0.3
+
+        # — Signal 2: ROIC trend (moat strengthening vs eroding)
+        if m.q3.roic_trend == "Improving":
+            q7_score += 0.3
+        elif m.q3.roic_trend == "Deteriorating":
+            q7_score -= 0.3
+
+        # — Signal 3: Share dilution (per-share value erosion)
+        if m.q4.share_dilution_pct is not None:
+            if m.q4.share_dilution_pct > 0.03:       # >3% dilution → concern
+                q7_score -= 0.5
+            elif m.q4.share_dilution_pct > 0.01:      # 1–3% dilution → mild watch
+                q7_score -= 0.2
+            elif m.q4.share_dilution_pct < -0.02:     # >2% buyback → small positive
+                q7_score += 0.2
+
+        # — Signal 4: FCF conversion ratio (earnings quality)
+        if m.q4.fcf_conversion_ratio is not None:
+            if m.q4.fcf_conversion_ratio < 0.5:       # FCF < 50% of earnings → poor quality
+                q7_score -= 0.5
+            elif m.q4.fcf_conversion_ratio < 0.7:     # FCF < 70% of earnings → watch
+                q7_score -= 0.2
+            elif m.q4.fcf_conversion_ratio >= 1.0:    # FCF exceeds earnings → high quality
+                q7_score += 0.3
+
+        # — Existing-holding adjustments
         if m.mode == "existing":
             if m.q6.valuation_change in ("Much More Expensive", "More Expensive"):
-                q7_score = max(0.0, q7_score - 0.5)
+                q7_score -= 0.5
             if m.portfolio.position_weight is not None and m.portfolio.position_weight > 0.15:
-                q7_score = max(0.0, q7_score - 0.5)
+                q7_score -= 0.5
+
         scores["Q7_Thesis"] = round(max(0.0, min(10.0, q7_score)), 1)
 
         return scores
